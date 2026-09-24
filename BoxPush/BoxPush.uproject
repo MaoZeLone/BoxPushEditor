@@ -1,0 +1,35 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{1CFC1435-45E9-C0BF-23C8-7A8F0D39AC62}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "BoxPush",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "BoxPushEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PythonScriptPlugin",
+			"Enabled": true
+		},
+		{
+			"Name": "ModelingToolsEditorMode",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "UE_MCP_Bridge",
+			"Enabled": false
+		}
+	]
+}

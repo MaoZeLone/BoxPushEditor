@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BoxLevelEditor · Slate 示意</title>
+  <style>
+    :root {
+      --bg: #1b1b1b;
+      --chrome: #2b2b2b;
+      --panel: #262626;
+      --panel-2: #303030;
+      --line: #3c3c3c;
+      --line-2: #4a4a4a;
+      --text: #dcdcdc;
+      --muted: #8f8f8f;
+      --accent: #0e7cc0;
+      --accent-2: #1093d8;
+      --ok: #3d8f4a;
+      --ok-bg: #1f3323;
+      --err: #d15b5b;
+      --err-bg: #3a2222;
+      --warn: #c9a227;
+      --warn-bg: #332c14;
+      --empty: #121212;
+      --floor: #3b3b38;
+      --wall: #6a7580;
+      --target: #c9a227;
+      --box: #c48a3a;
+      --player: #4ec3c7;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font: 13px/1.45 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      user-select: none;
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+      color: var(--text);
+    }
+
+    .app {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .ue-bar {
+      height: 28px;
+      background: var(--chrome);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .ue-bar strong { color: var(--text); font-weight: 600; }
+    .ue-bar span.dot { color: #666; }
+
+    .tab-bar {
+      height: 30px;
+      background: #222;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: flex-end;
+      padding: 0 8px;
+      gap: 4px;
+    }
+    .tab {
+      padding: 5px 12px 6px;
+      background: #1f1f1f;
+      border: 1px solid var(--line);
+      border-bottom: none;
+      color: var(--muted);
+    }
+    .tab.active {
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+    }
+    .toolbar .asset {
+      color: #9fd4ff;
+      font-family: Consolas, "Courier New", monospace;
+    }
+    .grow { flex: 1; }
+
+    .btn {
+      background: #3d3d3d;
+      border: 1px solid var(--line-2);
+      padding: 4px 10px;
+      cursor: pointer;
+    }
+    .btn:hover { background: #4a4a4a; }
+    .btn.primary { background: var(--accent); border-color: #0a5f93; }
+    .btn.primary:hover { background: var(--accent-2); }
+    .btn:disabled { opacity: 0.45; cursor: default; }
+
+    .dirty { color: var(--warn); font-size: 12px; }
+
+    .body {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 200px minmax(0, 1fr) 260px;
+      grid-template-rows: minmax(0, 1fr) auto;
+      min-height: 0;
+    }
+    .level-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      padding: 6px 8px;
+      margin-bottom: 2px;
+      cursor: pointer;
+    }
+    .level-item:hover { background: var(--panel-2); }
+    .level-item.active { background: #16364a; border-color: var(--accent); }
+    .level-item .id { font-family: Consolas, monospace; font-size: 12px; }
+    .level-item .sub { color: var(--muted); font-size: 11px; }
+    .level-item .badge { float: right; font-size: 10px; color: var(--muted); }
+    .level-item .badge.on { color: #8ed49a; }
+    .cat {
+      margin: 0 0 8px;
+      padding: 4px 6px;
+      background: #1c1c1c;
+      border: 1px solid var(--line);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .col {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 10px;
+      overflow: auto;
+    }
+    .col:last-of-type { border-right: none; border-left: 1px solid var(--line); }
+    .canvas-col {
+      background: #1e1e1e;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    h2 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .brush {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      padding: 3px 8px;
+      cursor: pointer;
+      color: var(--text);
+    }
+    .brush:hover { background: var(--panel-2); }
+    .brush.active {
+      background: #16364a;
+      border-color: var(--accent);
+    }
+    .swatch {
+      width: 16px;
+      height: 16px;
+      border: 1px solid #111;
+      flex: 0 0 16px;
+    }
+    .swatch.floor { background: var(--floor); }
+    .swatch.wall { background: var(--wall); }
+    .swatch.target { background: var(--floor); box-shadow: inset 0 0 0 3px var(--target); }
+    .swatch.box { background: var(--box); }
+    .swatch.player { background: var(--player); }
+    .swatch.eraser { background: #2a2a2a; box-shadow: inset 0 0 0 1px #888; }
+
+    .hint { color: var(--muted); font-size: 11px; margin-top: 12px; }
+
+    .canvas-meta {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .board-wrap {
+      flex: 1;
+      overflow: auto;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+
+    .board {
+      position: relative;
+      background:
+        linear-gradient(#2a2a2a, #2a2a2a) 12px 12px / 24px 1px no-repeat,
+        #141414;
+      border: 1px solid #111;
+      min-width: 280px;
+      min-height: 220px;
+    }
+    .viewport-label {
+      position: absolute;
+      left: 8px;
+      top: 8px;
+      z-index: 5;
+      font-size: 11px;
+      color: #9a9a9a;
+      pointer-events: none;
+    }
+
+    .iso {
+      --rise: 8px;
+      --top: #6d675c;
+      --leftc: #4e493f;
+      --rightc: #3a362f;
+      position: absolute;
+      width: 56px;
+      height: 28px;
+      cursor: pointer;
+    }
+    .iso .top, .iso .left, .iso .right { position: absolute; pointer-events: none; }
+    .iso .top {
+      width: 56px;
+      height: 28px;
+      background: var(--top);
+      clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+      transform: translateY(calc(var(--rise) * -1));
+    }
+    .iso .left, .iso .right { top: 14px; width: 28px; height: var(--rise); }
+    .iso .left {
+      left: 0;
+      background: var(--leftc);
+      transform: skewY(26.5deg);
+      transform-origin: top left;
+    }
+    .iso .right {
+      left: 28px;
+      background: var(--rightc);
+      transform: skewY(-26.5deg);
+      transform-origin: top right;
+    }
+    .iso.wall { --rise: 36px; --top: #9aa4b0; --leftc: #667280; --rightc: #4c5864; }
+    .iso.target { --top: #6d675c; }
+    .iso.target .mark {
+      position: absolute;
+      left: 20px;
+      top: -2px;
+      width: 16px;
+      height: 10px;
+      border: 2px solid #e2c15a;
+      border-radius: 50%;
+      z-index: 2;
+      pointer-events: none;
+    }
+    .iso .prop { position: absolute; pointer-events: none; }
+    .iso .prop.box {
+      left: 14px;
+      top: -22px;
+      width: 28px;
+      height: 16px;
+      background: #d7a45a;
+      clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+    }
+    .iso .prop.box::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 8px;
+      width: 14px;
+      height: 16px;
+      background: #a56a28;
+      transform: skewY(26.5deg);
+    }
+    .iso.target .prop.box { background: #e6c15a; }
+    .iso .prop.player {
+      left: 20px;
+      top: -26px;
+      width: 14px;
+      height: 22px;
+      background: #4ec3c7;
+      border-radius: 7px 7px 3px 3px;
+    }
+    .iso.hi .top { box-shadow: inset 0 0 0 2px #d15b5b; }
+
+    label.field {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    label.field input, label.field textarea, label.field select {
+      display: block;
+      width: 100%;
+      margin-top: 3px;
+      background: #1a1a1a;
+      border: 1px solid var(--line-2);
+      padding: 5px 6px;
+    }
+    label.field textarea { height: 64px; resize: vertical; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .actions { display: flex; gap: 6px; margin: 10px 0 8px; }
+    .actions .btn { flex: 1; }
+
+    .log {
+      grid-column: 1 / -1;
+      border-top: 1px solid var(--line);
+      background: #1a1a1a;
+      min-height: 96px;
+      max-height: 160px;
+      overflow: auto;
+      padding: 8px 12px;
+    }
+    .log h2 { margin-bottom: 6px; }
+    .issue {
+      display: flex;
+      gap: 8px;
+      padding: 4px 0;
+      cursor: pointer;
+    }
+    .issue b { flex: 0 0 36px; font-size: 11px; }
+    .issue.err b { color: var(--err); }
+    .issue.warn b { color: var(--warn); }
+    .issue.ok { color: #8ed49a; cursor: default; }
+    .pass-banner {
+      background: var(--ok-bg);
+      color: #b7e0bd;
+      padding: 6px 8px;
+      border: 1px solid #2d5a34;
+    }
+
+    .play-layer {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 10;
+      flex-direction: column;
+    }
+    .play-layer.on { display: flex; }
+    .play-bar {
+      height: 40px;
+      background: #16364a;
+      border-bottom: 1px solid var(--accent);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 12px;
+    }
+    .play-bar .tag {
+      background: var(--accent);
+      padding: 2px 8px;
+      font-size: 11px;
+    }
+    .play-stage {
+      flex: 1;
+      display: grid;
+      place-items: center;
+    }
+    .toast {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      background: #2f2f2f;
+      border: 1px solid var(--line-2);
+      padding: 8px 12px;
+      display: none;
+      z-index: 20;
+    }
+    .toast.on { display: block; }
+
+    .note {
+      padding: 8px 10px 0;
+      color: var(--muted);
+      font-size: 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="ue-bar">
+      <strong>BoxPush</strong>
+      <span>Unreal Editor 5.5.4</span>
+      <span class="dot">·</span>
+      <span>BoxPushEditor · Slate 资产编辑器，不进包体</span>
+    </div>
+    <div class="tab-bar">
+      <div class="tab active" id="docTab">BoxLevelEditor — LV_01_Push</div>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="btnNew">新建</button>
+      <button class="btn" id="btnSave">保存</button>
+      <button class="btn" id="btnValidate">校验</button>
+      <button class="btn primary" id="btnPlay">试玩此关</button>
+      <span class="asset" id="assetPath">/Game/Levels/BuiltIn/LV_01_Push</span>
+      <span class="dirty" id="dirtyMark" hidden>* 未保存</span>
+    </div>
+    <div class="body">
+      <aside class="col">
+        <h2>关卡列表</h2>
+        <div id="levelList"></div>
+        <p class="hint">双击资产打开的就是这个窗口。换关不用离开编辑器。</p>
+      </aside>
+      <section class="canvas-col">
+        <div class="canvas-meta">
+          <span id="gridInfo">FPreviewScene</span>
+          <span>
+            <button class="brush active" data-brush="wall"><i class="swatch wall"></i>墙</button>
+            <button class="brush" data-brush="floor"><i class="swatch floor"></i>地板</button>
+            <button class="brush" data-brush="target"><i class="swatch target"></i>目标</button>
+            <button class="brush" data-brush="box"><i class="swatch box"></i>箱子</button>
+            <button class="brush" data-brush="player"><i class="swatch player"></i>玩家</button>
+            <button class="brush" data-brush="eraser"><i class="swatch eraser"></i>橡皮</button>
+          </span>
+        </div>
+        <div class="board-wrap">
+          <div class="board" id="board"></div>
+        </div>
+      </section>
+      <aside class="col">
+        <h2>Details</h2>
+        <div class="cat">显示</div>
+        <label class="field">DisplayName<input id="fName" /></label>
+        <label class="field">SortOrder<input id="fSort" type="number" min="1" /></label>
+        <div class="cat">规则</div>
+        <label class="field">ParMoves<input id="fPar" type="number" min="1" /></label>
+        <div class="row2">
+          <label class="field">Width<input id="fW" type="number" min="5" max="20" /></label>
+          <label class="field">Height<input id="fH" type="number" min="5" max="20" /></label>
+        </div>
+        <div class="cat">策划</div>
+        <label class="field">DesignerNote<textarea id="fNote" placeholder="这一关在教什么"></textarea></label>
+        <p class="hint">SDetailsView 绑在 UBoxLevelData 上。视口用 DA_TileVisual 刷 Mesh，和运行时同一张表。1–6 换笔刷。</p>
+      </aside>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <div class="play-layer" id="playLayer">
+    <div class="play-bar">
+      <span class="tag">PIE · 试玩</span>
+      <span>WASD / 方向键移动 · Z 撤销 · R 重开 · Esc 停 PIE</span>
+      <span class="grow"></span>
+      <span id="playHud">步数 0</span>
+      <button class="btn" id="btnStopPlay">停止试玩</button>
+    </div>
+    <div class="play-stage">
+      <div class="board" id="playBoard"></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const EMPTY = 0, FLOOR = 1, WALL = 2, TARGET = 3;
+    const TERRAIN = { 0: "empty", 1: "floor", 2: "wall", 3: "target" };
+    const BRUSH_KEYS = { "1": "floor", "2": "wall", "3": "target", "4": "box", "5": "player", "6": "eraser" };
+
+    const catalog = [];
+    let current = null;
+    let currentIndex = 0;
+    let brush = "wall";
+    let painting = false;
+    let highlights = [];
+    let play = null;
+
+    function emptyGrid(w, h, fill = FLOOR) {
+      return Array.from({ length: h }, () => Array(w).fill(fill));
+    }
+
+    function boxedDefault(w = 8, h = 8) {
+      const terrain = emptyGrid(w, h, FLOOR);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        if (x === 0 || y === 0 || x === w - 1 || y === h - 1) terrain[y][x] = WALL;
+      }
+      terrain[3][4] = TARGET;
+      return {
+        id: "LV_New_" + (catalog.length + 1),
+        path: "/Game/Levels/BuiltIn/LV_New_" + (catalog.length + 1),
+        displayName: "未命名关卡",
+        parMoves: 8,
+        sortOrder: catalog.length + 1,
+        note: "",
+        width: w,
+        height: h,
+        terrain,
+        player: { x: 2, y: 3 },
+        boxes: [{ x: 3, y: 3 }],
+        dirty: true,
+        listed: false,
+      };
+    }
+
+    function preset(partial, layout) {
+      const w = layout[0].length, h = layout.length;
+      const terrain = emptyGrid(w, h, EMPTY);
+      const boxes = [];
+      let player = null;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const c = layout[y][x];
+        if (c === "#") terrain[y][x] = WALL;
+        else if (c === ".") terrain[y][x] = FLOOR;
+        else if (c === "x" || c === "*" || c === "+") terrain[y][x] = TARGET;
+        else if (c === " ") terrain[y][x] = EMPTY;
+        else terrain[y][x] = FLOOR;
+        if (c === "B" || c === "*") boxes.push({ x, y });
+        if (c === "P" || c === "+") player = { x, y };
+      }
+      return { dirty: false, listed: true, width: w, height: h, terrain, boxes, player, ...partial };
+    }
+
+    catalog.push(preset(
+      { id: "LV_01_Push", path: "/Game/Levels/BuiltIn/LV_01_Push", displayName: "推一下", parMoves: 3, sortOrder: 1, note: "第一关：把箱子推上目标。" },
+      [
+        "########",
+        "#......#",
+        "#.P B x#",
+        "#......#",
+        "########",
+      ]
+    ));
+    catalog.push(preset(
+      { id: "LV_03_Corridor", path: "/Game/Levels/BuiltIn/LV_03_Corridor", displayName: "走廊", parMoves: 12, sortOrder: 3, note: "先让位，再推箱子过窄道。" },
+      [
+        "##########",
+        "#........#",
+        "#.##.B..x#",
+        "#.P......#",
+        "#.##.B..x#",
+        "#........#",
+        "##########",
+      ]
+    ));
+    catalog.push(preset(
+      { id: "LV_07_Corner", path: "/Game/Levels/BuiltIn/LV_07_Corner", displayName: "死角", parMoves: 20, sortOrder: 7, note: "箱子贴两面墙且不是目标会警告。" },
+      [
+        "#######",
+        "#.....#",
+        "#.P B.#",
+        "#...x.#",
+        "#######",
+      ]
+    ));
+
+    const $ = (id) => document.getElementById(id);
+
+    function cloneLevel(lv) {
+      return {
+        ...lv,
+        terrain: lv.terrain.map((row) => row.slice()),
+        boxes: lv.boxes.map((b) => ({ ...b })),
+        player: lv.player ? { ...lv.player } : null,
+      };
+    }
+
+    function toast(text) {
+      const el = $("toast");
+      el.textContent = text;
+      el.classList.add("on");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => el.classList.remove("on"), 1800);
+    }
+
+    function markDirty() {
+      current.dirty = true;
+      $("dirtyMark").hidden = false;
+      $("docTab").textContent = "BoxLevelEditor — " + current.id + " *";
+    }
+
+    function setBrush(name) {
+      brush = name;
+      document.querySelectorAll(".brush").forEach((el) => {
+        el.classList.toggle("active", el.dataset.brush === name);
+      });
+    }
+
+    function boxAt(x, y, boxes = current.boxes) {
+      return boxes.findIndex((b) => b.x === x && b.y === y);
+    }
+
+    function standable(t) {
+      return t === FLOOR || t === TARGET;
+    }
+
+    function applyBrush(x, y, isRight, fromDrag) {
+      const use = isRight ? "eraser" : brush;
+      const t = current.terrain[y][x];
+      if (fromDrag && (use === "box" || use === "player")) return;
+      if (use === "floor") current.terrain[y][x] = FLOOR;
+      if (use === "wall") current.terrain[y][x] = WALL;
+      if (use === "target") current.terrain[y][x] = TARGET;
+      if (use === "eraser") {
+        current.terrain[y][x] = (t === EMPTY ? EMPTY : FLOOR);
+        current.boxes = current.boxes.filter((b) => !(b.x === x && b.y === y));
+        if (current.player && current.player.x === x && current.player.y === y) current.player = null;
+      }
+      if (use === "box") {
+        const i = boxAt(x, y);
+        if (i >= 0) current.boxes.splice(i, 1);
+        else {
+          if (!standable(current.terrain[y][x])) current.terrain[y][x] = FLOOR;
+          current.boxes.push({ x, y });
+        }
+      }
+      if (use === "player") {
+        if (!standable(current.terrain[y][x])) current.terrain[y][x] = FLOOR;
+        current.player = { x, y };
+      }
+
+      if (["floor", "wall", "target"].includes(use)) {
+        const nt = current.terrain[y][x];
+        if (!standable(nt)) {
+          const hadBox = boxAt(x, y) >= 0;
+          const hadP = current.player && current.player.x === x && current.player.y === y;
+          current.boxes = current.boxes.filter((b) => !(b.x === x && b.y === y));
+          if (hadP) current.player = null;
+          if (hadBox || hadP) toast("该格不再可站，已清掉实体");
+        }
+      }
+      highlights = [];
+      markDirty();
+      renderBoard();
+    }
+
+    function cellClass(x, y, terrain, boxes, player) {
+      const names = [TERRAIN[terrain[y][x]]];
+      if (highlights.some((h) => h.x === x && h.y === y)) names.push("hi");
+      return names.join(" ");
+    }
+
+    function cellTokens(x, y, boxes, player) {
+      let html = "";
+      if (boxAt(x, y, boxes) >= 0) html += '<i class="token box"></i>';
+      if (player && player.x === x && player.y === y) html += '<i class="token player"></i>';
+      return html;
+    }
+
+    function paintBoard(el, terrain, boxes, player, interactive) {
+      const h = terrain.length, w = terrain[0].length;
+      const tw = 56, th = 28;
+      el.style.width = (w + h) * (tw / 2) + 48 + "px";
+      el.style.height = (w + h) * (th / 2) + 96 + "px";
+      el.innerHTML = '<div class="viewport-label">FPreviewScene · DA_TileVisual</div>';
+      const originX = h * (tw / 2);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const t = terrain[y][x];
+        if (t === EMPTY) continue;
+        const cell = document.createElement("div");
+        const kind = t === WALL ? "wall" : t === TARGET ? "target" : "floor";
+        const hi = highlights.some((p) => p.x === x && p.y === y) ? " hi" : "";
+        cell.className = "iso " + kind + hi;
+        cell.style.left = originX + (x - y) * (tw / 2) + "px";
+        cell.style.top = 36 + (x + y) * (th / 2) + "px";
+        cell.style.zIndex = String(x + y + (t === WALL ? 1 : 0));
+        let props = "";
+        if (boxAt(x, y, boxes) >= 0) props += '<i class="prop box"></i>';
+        if (player && player.x === x && player.y === y) props += '<i class="prop player"></i>';
+        if (t === TARGET) props += '<i class="mark"></i>';
+        cell.innerHTML = '<i class="top"></i><i class="left"></i><i class="right"></i>' + props;
+        if (interactive) {
+          cell.addEventListener("pointerdown", (e) => {
+            e.preventDefault();
+            painting = true;
+            applyBrush(x, y, e.button === 2, false);
+          });
+          cell.addEventListener("pointerenter", (e) => {
+            if (painting) applyBrush(x, y, e.buttons === 2, true);
+          });
+        }
+        el.appendChild(cell);
+      }
+    }
+
+    function renderBoard() {
+      if (!current) return;
+      $("gridInfo").textContent = `${current.width} × ${current.height}`;
+      paintBoard($("board"), current.terrain, current.boxes, current.player, true);
+    }
+
+    function syncFields() {
+      $("fName").value = current.displayName;
+      $("fPar").value = current.parMoves;
+      $("fSort").value = current.sortOrder;
+      $("fW").value = current.width;
+      $("fH").value = current.height;
+      $("fNote").value = current.note;
+      $("assetPath").textContent = current.path;
+      $("dirtyMark").hidden = !current.dirty;
+      $("docTab").textContent = "BoxLevelEditor — " + current.id + (current.dirty ? " *" : "");
+      renderList();
+    }
+
+    function validate(lv) {
+      const errors = [];
+      const warns = [];
+      const players = lv.player ? 1 : 0;
+      const targets = lv.terrain.flat().filter((t) => t === TARGET).length;
+      if (players !== 1) errors.push({ text: `玩家数量是 ${players}，必须恰好 1 个`, cells: lv.player ? [lv.player] : [] });
+      if (lv.boxes.length !== targets) errors.push({ text: `箱子 ${lv.boxes.length} 个，目标 ${targets} 个，胜利条件无法达成`, cells: lv.boxes });
+      if (lv.boxes.length < 1) errors.push({ text: "箱子数量 < 1" });
+      if (lv.width < 5 || lv.width > 20 || lv.height < 5 || lv.height > 20) errors.push({ text: "宽或高越界（5–20）" });
+      if (!lv.id) errors.push({ text: "LevelId 为空" });
+
+      const bad = [];
+      if (lv.player) {
+        const t = lv.terrain[lv.player.y][lv.player.x];
+        if (!standable(t)) bad.push(lv.player);
+      }
+      lv.boxes.forEach((b) => {
+        const t = lv.terrain[b.y][b.x];
+        if (!standable(t)) bad.push(b);
+      });
+      if (bad.length) errors.push({ text: "玩家或箱子落在空洞 / 墙上", cells: bad });
+
+      const h = lv.height, w = lv.width;
+      let rimWall = true;
+      for (let x = 0; x < w; x++) if (lv.terrain[0][x] !== WALL || lv.terrain[h - 1][x] !== WALL) rimWall = false;
+      for (let y = 0; y < h; y++) if (lv.terrain[y][0] !== WALL || lv.terrain[y][w - 1] !== WALL) rimWall = false;
+      if (!rimWall) warns.push({ text: "最外圈没有封闭的墙，角色可能走出去" });
+
+      lv.boxes.forEach((b) => {
+        const t = lv.terrain[b.y][b.x];
+        if (t === TARGET) return;
+        const blocked = (dx, dy) => {
+          const nx = b.x + dx, ny = b.y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) return true;
+          return lv.terrain[ny][nx] === WALL;
+        };
+        if ((blocked(-1, 0) || blocked(1, 0)) && (blocked(0, -1) || blocked(0, 1)) && (blocked(-1, 0) + blocked(1, 0) + blocked(0, -1) + blocked(0, 1) >= 2)) {
+          if (blocked(-1, 0) && blocked(0, -1) || blocked(-1, 0) && blocked(0, 1) || blocked(1, 0) && blocked(0, -1) || blocked(1, 0) && blocked(0, 1)) {
+            warns.push({ text: `箱子 (${b.x},${b.y}) 贴两面墙且不是目标，可能是死角`, cells: [b] });
+          }
+        }
+      });
+      if (!lv.parMoves) warns.push({ text: "未填推荐步数" });
+      if (!lv.note) warns.push({ text: "策划备注为空，这一关的教学意图没写" });
+
+      return { errors, warns, ok: errors.length === 0 };
+    }
+
+    function renderLog(result) {
+      const el = $("log");
+      if (result.ok && result.warns.length === 0) {
+        el.innerHTML = '<h2>规范结果</h2><div class="pass-banner">通过。可以进选关表，也可以 PIE。</div>';
+        return;
+      }
+      const rows = [];
+      result.errors.forEach((e) => rows.push({ kind: "err", ...e }));
+      result.warns.forEach((e) => rows.push({ kind: "warn", ...e }));
+      el.innerHTML = "<h2>规范结果</h2>" + rows.map((r, i) =>
+        `<div class="issue ${r.kind}" data-i="${i}"><b>${r.kind === "err" ? "错误" : "警告"}</b><span>${r.text}</span></div>`
+      ).join("");
+      el._rows = rows;
+      el.querySelectorAll(".issue").forEach((node) => {
+        node.onclick = () => {
+          const item = rows[Number(node.dataset.i)];
+          highlights = item.cells || [];
+          renderBoard();
+        };
+      });
+    }
+
+    function loadLevel(lv) {
+      current = cloneLevel(lv);
+      highlights = [];
+      syncFields();
+      renderBoard();
+      renderLog(validate(current));
+    }
+
+    function renderList() {
+      const el = $("levelList");
+      el.innerHTML = catalog.map((lv, i) => {
+        const on = lv.listed ? "on" : "";
+        const mark = lv.listed ? "已上架" : "未上架";
+        return `<button class="level-item ${i === currentIndex ? "active" : ""}" data-i="${i}"><span class="badge ${on}">${mark}</span><div class="id">${lv.id}</div><div class="sub">${lv.displayName}</div></button>`;
+      }).join("");
+      el.querySelectorAll(".level-item").forEach((node) => {
+        node.onclick = () => openIndex(Number(node.dataset.i));
+      });
+    }
+
+    function openIndex(i) {
+      currentIndex = i;
+      loadLevel(catalog[i]);
+    }
+
+    function resizeTo(nw, nh) {
+      nw = Math.max(5, Math.min(20, nw));
+      nh = Math.max(5, Math.min(20, nh));
+      const cropEntities = [];
+      if (current.player && (current.player.x >= nw || current.player.y >= nh)) cropEntities.push("玩家");
+      current.boxes.forEach((b) => { if (b.x >= nw || b.y >= nh) cropEntities.push("箱子"); });
+      if (cropEntities.length && !confirm(`改尺寸会裁掉：${cropEntities.join("、")}。确定？`)) {
+        $("fW").value = current.width;
+        $("fH").value = current.height;
+        return;
+      }
+      const next = emptyGrid(nw, nh, FLOOR);
+      for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) {
+        next[y][x] = (y < current.height && x < current.width) ? current.terrain[y][x] : FLOOR;
+      }
+      current.terrain = next;
+      current.width = nw;
+      current.height = nh;
+      if (current.player && (current.player.x >= nw || current.player.y >= nh)) current.player = null;
+      current.boxes = current.boxes.filter((b) => b.x < nw && b.y < nh);
+      markDirty();
+      renderBoard();
+    }
+
+    function startPlay() {
+      const result = validate(current);
+      renderLog(result);
+      if (!result.ok) {
+        toast("校验失败，不能 PIE");
+        return;
+      }
+      play = {
+        terrain: current.terrain,
+        player: { ...current.player },
+        boxes: current.boxes.map((b) => ({ ...b })),
+        startPlayer: { ...current.player },
+        startBoxes: current.boxes.map((b) => ({ ...b })),
+        undo: [],
+        moves: 0,
+        won: false,
+      };
+      $("playLayer").classList.add("on");
+      renderPlay();
+    }
+
+    function stopPlay() {
+      play = null;
+      $("playLayer").classList.remove("on");
+      toast("已停 PIE，回到编辑器，资产仍打开");
+    }
+
+    function renderPlay() {
+      $("playHud").textContent = play.won ? `胜利 · ${play.moves} 步（试玩不写存档）` : `步数 ${play.moves}`;
+      highlights = [];
+      paintBoard($("playBoard"), play.terrain, play.boxes, play.player, false);
+    }
+
+    function tryMove(dx, dy) {
+      if (!play || play.won) return;
+      const x = play.player.x + dx, y = play.player.y + dy;
+      const w = play.terrain[0].length, h = play.terrain.length;
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      const t = play.terrain[y][x];
+      if (t === WALL || t === EMPTY) return;
+      const bi = boxAt(x, y, play.boxes);
+      const snapshot = { player: { ...play.player }, boxes: play.boxes.map((b) => ({ ...b })) };
+      if (bi >= 0) {
+        const bx = x + dx, by = y + dy;
+        if (bx < 0 || by < 0 || bx >= w || by >= h) return;
+        const bt = play.terrain[by][bx];
+        if (bt === WALL || bt === EMPTY || boxAt(bx, by, play.boxes) >= 0) return;
+        play.boxes[bi] = { x: bx, y: by };
+      }
+      play.undo.push(snapshot);
+      play.player = { x, y };
+      play.moves += 1;
+      const targets = [];
+      play.terrain.forEach((row, yy) => row.forEach((cell, xx) => { if (cell === TARGET) targets.push({ x: xx, y: yy }); }));
+      play.won = targets.every((tg) => boxAt(tg.x, tg.y, play.boxes) >= 0);
+      renderPlay();
+    }
+
+    function bind() {
+      document.querySelectorAll(".brush").forEach((el) => {
+        el.onclick = () => setBrush(el.dataset.brush);
+      });
+      $("board").addEventListener("contextmenu", (e) => e.preventDefault());
+      window.addEventListener("pointerup", () => { painting = false; });
+
+      $("btnNew").onclick = () => {
+        const lv = boxedDefault();
+        catalog.push(lv);
+        openIndex(catalog.length - 1);
+        toast("已创建默认合法关：1 人 1 箱 1 目标");
+      };
+      $("btnSave").onclick = () => {
+        const result = validate(current);
+        current.listed = result.ok;
+        current.dirty = false;
+        catalog[currentIndex] = cloneLevel(current);
+        syncFields();
+        renderLog(result);
+        toast(result.ok ? "已写回资产，bListed = true" : "已保存半成品，bListed = false，不进选关表");
+      };
+      $("btnValidate").onclick = () => {
+        const result = validate(current);
+        highlights = [];
+        renderLog(result);
+        renderBoard();
+      };
+      $("btnPlay").onclick = startPlay;
+      $("btnStopPlay").onclick = stopPlay;
+
+      ["fName", "fPar", "fSort", "fNote"].forEach((id) => {
+        $(id).addEventListener("input", () => {
+          current.displayName = $("fName").value;
+          current.parMoves = Number($("fPar").value);
+          current.sortOrder = Number($("fSort").value);
+          current.note = $("fNote").value;
+          markDirty();
+        });
+      });
+      const applySize = () => resizeTo(Number($("fW").value), Number($("fH").value));
+      $("fW").addEventListener("change", applySize);
+      $("fH").addEventListener("change", applySize);
+
+      window.addEventListener("keydown", (e) => {
+        if (play) {
+          const map = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0], W: [0, -1], A: [-1, 0], S: [0, 1], D: [1, 0] };
+          if (map[e.key]) { e.preventDefault(); tryMove(...map[e.key]); }
+          if (e.key === "z" || e.key === "Z") {
+            const prev = play.undo.pop();
+            if (prev) {
+              play.player = prev.player;
+              play.boxes = prev.boxes;
+              play.moves = Math.max(0, play.moves - 1);
+              play.won = false;
+              renderPlay();
+            }
+          }
+          if (e.key === "r" || e.key === "R") {
+            play.player = { ...play.startPlayer };
+            play.boxes = play.startBoxes.map((b) => ({ ...b }));
+            play.undo = [];
+            play.moves = 0;
+            play.won = false;
+            renderPlay();
+          }
+          if (e.key === "Escape") stopPlay();
+          return;
+        }
+        if (BRUSH_KEYS[e.key] && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+          setBrush(BRUSH_KEYS[e.key]);
+        }
+      });
+    }
+
+    bind();
+    openIndex(0);
+  </script>
+</body>
+</html>

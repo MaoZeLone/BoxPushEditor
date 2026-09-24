@@ -1,0 +1,25 @@
+# Unreal generated
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+.vs/
+.idea/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.suo
+*.sln
+*.xcworkspace
+*.xcodeproj
+
+# Local editor history
+.specstory/
+.vscode/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
