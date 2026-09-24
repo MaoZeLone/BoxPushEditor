@@ -8,30 +8,20 @@
 
 UGoalLogic::UGoalLogic()
 {
-	RequiredType = TAG_Type_Interactable_Box;
 }
 
 void UGoalLogic::PostLoad()
 {
 	Super::PostLoad();
-	if (!RequiredType.IsValid())
-	{
-		RequiredType = TAG_Type_Interactable_Box;
-	}
 }
 
 UPedalLogic::UPedalLogic()
 {
-	AcceptType = TAG_Type_Interactable_Box;
 }
 
 void UPedalLogic::PostLoad()
 {
 	Super::PostLoad();
-	if (!AcceptType.IsValid())
-	{
-		AcceptType = TAG_Type_Interactable_Box;
-	}
 }
 
 bool UInteractableLogicComp::IsWinSatisfied(const UBoxBoard& Board, const FBoxRuntimeInstance& Self) const

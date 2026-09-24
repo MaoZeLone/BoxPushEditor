@@ -217,7 +217,11 @@ void ABoxPlayerCharacter::Tick(float DeltaSeconds)
 	if (bMoving)
 	{
 		const UPlayerDef* Look = PlayerDef ? PlayerDef.Get() : UPlayerDef::LoadOfficial();
-		const float Interval = Look ? Look->GetFrameInterval() : 0.16f;
+		const float Interval = Look ? Look->GetFrameInterval() : 0.f;
+		if (Interval <= 0.f)
+		{
+			return;
+		}
 		SpriteAnimTime += DeltaSeconds;
 		const int32 NextFrame = FMath::Max(0, static_cast<int32>(SpriteAnimTime / Interval));
 		if (NextFrame != SpriteFrame)

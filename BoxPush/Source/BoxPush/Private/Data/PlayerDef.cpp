@@ -17,27 +17,7 @@ UPlayerDef::UPlayerDef()
 
 UPlayerDef* UPlayerDef::LoadOfficial()
 {
-	if (UPlayerDef* Loaded = LoadObject<UPlayerDef>(nullptr, *BoxAssetPaths::PlayerDef()))
-	{
-		return Loaded;
-	}
-
-	static TWeakObjectPtr<UPlayerDef> Fallback;
-	if (UPlayerDef* Existing = Fallback.Get())
-	{
-		return Existing;
-	}
-
-	UPlayerDef* Created = NewObject<UPlayerDef>(GetTransientPackage(), TEXT("RuntimePlayerDef"));
-	Created->ApplyOfficialDefaults();
-	Created->InputConfig = LoadObject<UBoxInputConfig>(nullptr, *BoxAssetPaths::PlayerInputConfig());
-	Created->ActionSet = LoadObject<UBoxActionSet>(nullptr, *BoxAssetPaths::PlayerActionSet());
-	Created->TagRelationshipMapping = LoadObject<UBoxAbilityTagRelationshipMapping>(
-		nullptr, *BoxAssetPaths::PlayerTagRelationships());
-	Created->AddToRoot();
-	Fallback = Created;
-	UE_LOG(LogTemp, Warning, TEXT("DA_Player failed to load. Play uses a runtime player def so the character can still move."));
-	return Created;
+	return LoadObject<UPlayerDef>(nullptr, *BoxAssetPaths::PlayerDef());
 }
 
 FPrimaryAssetId UPlayerDef::GetPrimaryAssetId() const
@@ -69,7 +49,7 @@ FBoxAtlasFrame UPlayerDef::PickFrame(int32 FacingSteps, bool bPushing, bool bWal
 
 float UPlayerDef::GetFrameInterval() const
 {
-	return Sprite && Sprite->FrameInterval > 0.f ? Sprite->FrameInterval : 0.16f;
+	return Sprite ? Sprite->FrameInterval : 0.f;
 }
 
 bool UPlayerDef::CanPerform(FGameplayTag AbilityTag, const FGameplayTagContainer& OwnerTags) const

@@ -1,20 +1,28 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Game/BoxProjectSettings.h"
 
 namespace BoxGrid
 {
-	inline constexpr float CellSize = 200.f;
-	inline constexpr float OriginZ = 200.f;
+	inline float CellSize()
+	{
+		return GetDefault<UBoxProjectSettings>()->CellSize;
+	}
+
+	inline float OriginZ()
+	{
+		return GetDefault<UBoxProjectSettings>()->OriginZ;
+	}
 
 	inline FVector CellToWorld(FIntPoint Cell, float Z = 0.f)
 	{
-		return FVector((Cell.X + 0.5f) * CellSize, (Cell.Y + 0.5f) * CellSize, OriginZ + Z);
+		return FVector((Cell.X + 0.5f) * CellSize(), (Cell.Y + 0.5f) * CellSize(), OriginZ() + Z);
 	}
 
 	inline FVector BoardCenter(int32 Width, int32 Height)
 	{
-		return FVector(Width * CellSize * 0.5f, Height * CellSize * 0.5f, OriginZ);
+		return FVector(Width * CellSize() * 0.5f, Height * CellSize() * 0.5f, OriginZ());
 	}
 
 	inline FIntPoint Neighbor(FIntPoint Cell, FIntPoint Dir)
@@ -70,15 +78,26 @@ namespace BoxFacing
 	}
 }
 
-/** 对局正交俯视。位置在棋盘中心正上方，朝下看。 */
+/** 对局正交俯视。数值来自项目设置。 */
 namespace BoxPlayCamera
 {
-	inline const FVector Offset(0.f, 0.f, 3000.f);
-	inline const FRotator Rotation(-90.f, 90.f, 0.f);
-	inline constexpr float FieldOfView = 50.f;
+	inline FVector Offset()
+	{
+		return GetDefault<UBoxProjectSettings>()->CameraOffset;
+	}
+
+	inline FRotator Rotation()
+	{
+		return GetDefault<UBoxProjectSettings>()->CameraRotation;
+	}
+
+	inline float FieldOfView()
+	{
+		return GetDefault<UBoxProjectSettings>()->CameraFOV;
+	}
 
 	inline FVector ViewLocation(int32 Width, int32 Height)
 	{
-		return BoxGrid::BoardCenter(Width, Height) + Offset;
+		return BoxGrid::BoardCenter(Width, Height) + Offset();
 	}
 }

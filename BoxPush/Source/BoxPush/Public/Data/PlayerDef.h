@@ -33,6 +33,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display")
 	FString DesignerNote;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display", meta = (DisplayName = "色块"))
+	FLinearColor PaletteColor = FLinearColor(0.56f, 0.82f, 0.92f);
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spawn")
 	TSubclassOf<APawn> PawnClass;
 

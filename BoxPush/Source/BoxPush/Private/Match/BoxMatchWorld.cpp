@@ -10,6 +10,7 @@
 #include "Data/VisualComps.h"
 #include "Engine/Texture2D.h"
 #include "Game/BoxGameMode.h"
+#include "Game/BoxProjectSettings.h"
 #include "Game/BoxPlayerController.h"
 #include "Match/BoxGrid.h"
 #include "Match/BoxGridSim.h"
@@ -34,6 +35,7 @@ ABoxMatchWorld::ABoxMatchWorld()
 
 bool ABoxMatchWorld::StartLevel(const ULevelData* Level)
 {
+	StepDuration = GetDefault<UBoxProjectSettings>()->StepDuration;
 	ClearMoveQueue();
 	if (!Board)
 	{
@@ -101,9 +103,9 @@ void ABoxMatchWorld::ApplySpriteCamera()
 	SpriteView->SetUsingAbsoluteLocation(true);
 	SpriteView->SetUsingAbsoluteRotation(true);
 	SpriteView->SetWorldLocation(ViewLocation);
-	SpriteView->SetWorldRotation(BoxPlayCamera::Rotation);
+	SpriteView->SetWorldRotation(BoxPlayCamera::Rotation());
 	SpriteView->SetProjectionMode(ECameraProjectionMode::Perspective);
-	SpriteView->SetFieldOfView(BoxPlayCamera::FieldOfView);
+	SpriteView->SetFieldOfView(BoxPlayCamera::FieldOfView());
 	SpriteView->bAutoCalculateOrthoPlanes = false;
 	SpriteView->SetActive(true);
 	SpriteView->bUsePawnControlRotation = false;
@@ -129,7 +131,7 @@ void ABoxMatchWorld::ApplySpriteCamera()
 		PC->PlayerCameraManager->ViewPitchMin = -90.f;
 		PC->PlayerCameraManager->ViewPitchMax = 90.f;
 	}
-	PC->SetControlRotation(BoxPlayCamera::Rotation);
+	PC->SetControlRotation(BoxPlayCamera::Rotation());
 	PC->SetViewTargetWithBlend(this, 0.f);
 }
 

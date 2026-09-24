@@ -59,19 +59,6 @@ void ULevelData::ApplyNewLevelDefaults(FName NewLevelId)
 	Cells.Init(ETerrainCell::Floor, Width * Height);
 	PlayerSpawn = FIntPoint(2, 3);
 	Instances.Reset();
-
-	auto MakeInstance = [](FName InstanceId, FName DefId, FIntPoint Cell)
-	{
-		FBoxLevelInstance Inst;
-		Inst.InstanceId = InstanceId;
-		Inst.DefinitionId = DefId;
-		Inst.Definition = TSoftObjectPtr<UInteractableDef>(FSoftObjectPath(
-			BoxAssetPaths::InteractableObject(DefId.ToString())));
-		Inst.Cell = Cell;
-		return Inst;
-	};
-	Instances.Add(MakeInstance(TEXT("Box_0"), TEXT("Box_Normal"), FIntPoint(3, 3)));
-	Instances.Add(MakeInstance(TEXT("Target_0"), TEXT("Target"), FIntPoint(5, 3)));
 }
 
 void ULevelData::ResizeGrid(int32 NewWidth, int32 NewHeight)

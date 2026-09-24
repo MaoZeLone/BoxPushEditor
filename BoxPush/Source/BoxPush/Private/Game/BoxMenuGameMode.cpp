@@ -28,8 +28,8 @@ void ABoxMenuGameMode::StartPlay()
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	ACameraActor* Cam = World->SpawnActor<ACameraActor>(
 		ACameraActor::StaticClass(),
-		BoxPlayCamera::Offset,
-		BoxPlayCamera::Rotation,
+		BoxPlayCamera::Offset(),
+		BoxPlayCamera::Rotation(),
 		Params);
 	if (Cam)
 	{
@@ -54,11 +54,11 @@ void ABoxMenuGameMode::StartPlay()
 		{
 			BoxPC->UnlockTopDownView();
 		}
-		PC->SetControlRotation(BoxPlayCamera::Rotation);
+		PC->SetControlRotation(BoxPlayCamera::Rotation());
 		if (APawn* Pawn = PC->GetPawn())
 		{
 			Pawn->DisableInput(PC);
-			Pawn->SetActorLocationAndRotation(BoxPlayCamera::Offset, BoxPlayCamera::Rotation);
+			Pawn->SetActorLocationAndRotation(BoxPlayCamera::Offset(), BoxPlayCamera::Rotation());
 		}
 		if (Cam)
 		{

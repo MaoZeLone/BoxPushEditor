@@ -45,7 +45,7 @@ namespace BoxAssetPaths
 	}
 	inline FString PlayerSprite()
 	{
-		return TEXT("/Game/Data/Characters/DA_PlayerSprite.DA_PlayerSprite");
+		return FromSetting(Settings()->PlayerSprite, TEXT("/Game/Data/Characters/DA_PlayerSprite.DA_PlayerSprite"));
 	}
 	inline FString PlayerBlueprint()
 	{

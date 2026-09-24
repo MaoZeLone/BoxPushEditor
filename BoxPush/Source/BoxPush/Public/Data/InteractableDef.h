@@ -27,6 +27,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display")
 	FString DesignerNote;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display", meta = (DisplayName = "色块"))
+	FLinearColor PaletteColor = FLinearColor::White;
+
 	UPROPERTY()
 	bool bOfficialOverridesSeeded = false;
 

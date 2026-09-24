@@ -15,7 +15,7 @@ public:
 
 	virtual FName GetCategoryName() const override;
 
-	/** 空则用工程旁的 Asset/UI。 */
+	/** 空则用工程内的 Asset/UI。 */
 	UPROPERTY(Config, EditAnywhere, Category = "2D", meta = (DisplayName = "界面图包目录"))
 	FDirectoryPath UiPackRoot;
 
@@ -57,6 +57,31 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category = "内容", meta = (DisplayName = "交互物目录"))
 	FString InteractableDirectory;
+
+	UPROPERTY(Config, EditAnywhere, Category = "内容", meta = (DisplayName = "角色表现"))
+	FSoftObjectPath PlayerSprite;
+
+	UPROPERTY(Config, EditAnywhere, Category = "棋盘", meta = (ClampMin = "1", DisplayName = "格子边长"))
+	float CellSize = 200.f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "棋盘", meta = (DisplayName = "地面高度"))
+	float OriginZ = 200.f;
+
+	/** 世界边长为 0 时，面片占格子边长的这个比例。 */
+	UPROPERTY(Config, EditAnywhere, Category = "棋盘", meta = (ClampMin = "0.01", ClampMax = "1", DisplayName = "贴图占格"))
+	float TileFit = 0.975f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "棋盘", meta = (ClampMin = "0.01", DisplayName = "一步秒数"))
+	float StepDuration = 0.36f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "镜头", meta = (DisplayName = "相机偏移"))
+	FVector CameraOffset = FVector(0.f, 0.f, 3000.f);
+
+	UPROPERTY(Config, EditAnywhere, Category = "镜头", meta = (DisplayName = "相机旋转"))
+	FRotator CameraRotation = FRotator(-90.f, 90.f, 0.f);
+
+	UPROPERTY(Config, EditAnywhere, Category = "镜头", meta = (ClampMin = "1", DisplayName = "视野"))
+	float CameraFOV = 50.f;
 
 	FString ResolveUiPackRoot() const;
 };

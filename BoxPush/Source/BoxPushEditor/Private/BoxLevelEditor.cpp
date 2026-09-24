@@ -268,44 +268,6 @@ namespace
 		return Asset;
 	}
 
-	FText OfficialInteractableName(FName Id)
-	{
-		if (Id == TEXT("Box_Normal"))
-		{
-			return FText::FromString(TEXT("普通箱子"));
-		}
-		if (Id == TEXT("Box_Slide"))
-		{
-			return FText::FromString(TEXT("滑动箱子"));
-		}
-		if (Id == TEXT("Box_Return"))
-		{
-			return FText::FromString(TEXT("返回箱子"));
-		}
-		if (Id == TEXT("Target"))
-		{
-			return FText::FromString(TEXT("目标"));
-		}
-		if (Id == TEXT("Pedal"))
-		{
-			return FText::FromString(TEXT("踏板"));
-		}
-		return FText::GetEmpty();
-	}
-
-	bool ShouldReplaceDisplayName(const FString& Current, FName Id)
-	{
-		if (Current.IsEmpty() || Current == Id.ToString() || Current.StartsWith(TEXT("DA_")))
-		{
-			return true;
-		}
-		return Current == TEXT("Normal Box")
-			|| Current == TEXT("Slide Box")
-			|| Current == TEXT("Return Box")
-			|| Current == TEXT("Target")
-			|| Current == TEXT("Pedal");
-	}
-
 	FString FolderLabel(FGameplayTag Tag)
 	{
 		return UBoxTypeDisplayLibrary::GetDisplayName(Tag).ToString();
@@ -894,9 +856,10 @@ void FBoxLevelEditor::RebuildPalette()
 {
 	AllAssets.Reset();
 
-	FBoxPaletteAsset PlayerAsset = MakeTool(TEXT("player"), UBoxTypeDisplayLibrary::Character(), TEXT("玩家"), FLinearColor(0.56f, 0.82f, 0.92f), EBoxLevelBrush::Player);
+	FBoxPaletteAsset PlayerAsset = MakeTool(TEXT("player"), UBoxTypeDisplayLibrary::Character(), TEXT("玩家"), FLinearColor::White, EBoxLevelBrush::Player);
 	if (UPlayerDef* Player = LoadObject<UPlayerDef>(nullptr, *BoxAssetPaths::PlayerDef()))
 	{
+		PlayerAsset.Color = Player->PaletteColor;
 		if (!Player->Type.IsValid())
 		{
 			PlayerAsset.TypeTag = UBoxTypeDisplayLibrary::Character();
@@ -948,13 +911,6 @@ void FBoxLevelEditor::RebuildPalette()
 	{
 		AddTerrain(Cast<UTerrainDef>(Asset.GetAsset()));
 	}
-	if (TerrainAssets.Num() == 0)
-	{
-		AllAssets.Add(MakeTool(TEXT("Floor"), UBoxTypeDisplayLibrary::TerrainFloor(), TEXT("地板"), FLinearColor(0.79f, 0.64f, 0.43f), EBoxLevelBrush::Floor));
-		AllAssets.Add(MakeTool(TEXT("Wall"), UBoxTypeDisplayLibrary::TerrainWall(), TEXT("墙"), FLinearColor(0.54f, 0.40f, 0.30f), EBoxLevelBrush::Wall));
-		AllAssets.Add(MakeTool(TEXT("Empty"), UBoxTypeDisplayLibrary::TerrainEmpty(), TEXT("空洞"), FLinearColor(0.05f, 0.05f, 0.05f), EBoxLevelBrush::Empty));
-	}
-
 	TArray<FAssetData> Assets;
 	Registry.GetAssetsByClass(UInteractableDef::StaticClass()->GetClassPathName(), Assets);
 	for (const FAssetData& Asset : Assets)
@@ -966,36 +922,12 @@ void FBoxLevelEditor::RebuildPalette()
 		}
 		FBoxPaletteAsset Entry;
 		Entry.Id = Def->DefinitionId.IsNone() ? Asset.AssetName : Def->DefinitionId;
-		const FText Official = OfficialInteractableName(Entry.Id);
 		Entry.TypeTag = Def->Type.IsValid() ? Def->Type : UBoxTypeDisplayLibrary::InferInteractableType(Entry.Id);
-		Entry.Name = Def->DisplayName.IsEmpty() ? Official : Def->DisplayName;
-		if (Entry.Name.IsEmpty() || ShouldReplaceDisplayName(Entry.Name.ToString(), Entry.Id))
-		{
-			Entry.Name = Official.IsEmpty() ? Entry.Name : Official;
-		}
+		Entry.Name = Def->DisplayName.IsEmpty() ? FText::FromName(Entry.Id) : Def->DisplayName;
 		Entry.Type = UBoxTypeDisplayLibrary::GetDisplayName(Entry.TypeTag);
 		Entry.Brush = EBoxLevelBrush::Interactable;
 		Entry.Definition = Def;
-		if (Def->Type.MatchesTag(UBoxTypeDisplayLibrary::InteractableTarget()))
-		{
-			Entry.Color = FLinearColor(0.88f, 0.70f, 0.23f);
-		}
-		else if (Def->Type.MatchesTag(UBoxTypeDisplayLibrary::InteractablePedal()))
-		{
-			Entry.Color = FLinearColor(0.25f, 0.49f, 0.45f);
-		}
-		else if (Entry.Id == TEXT("Box_Slide"))
-		{
-			Entry.Color = FLinearColor(0.43f, 0.56f, 0.27f);
-		}
-		else if (Entry.Id == TEXT("Box_Return"))
-		{
-			Entry.Color = FLinearColor(0.55f, 0.36f, 0.53f);
-		}
-		else
-		{
-			Entry.Color = FLinearColor(0.77f, 0.42f, 0.20f);
-		}
+		Entry.Color = Def->PaletteColor;
 		AllAssets.Add(Entry);
 	}
 
@@ -1234,8 +1166,7 @@ FText FBoxLevelEditor::TitleForInstance(const FBoxLevelInstance& Inst) const
 			return Def->DisplayName;
 		}
 	}
-	const FText Official = OfficialInteractableName(Inst.GetResolvedDefinitionId());
-	return Official.IsEmpty() ? FText::FromName(Inst.GetResolvedDefinitionId()) : Official;
+	return FText::FromName(Inst.GetResolvedDefinitionId());
 }
 
 FText FBoxLevelEditor::GetSelectedTitle() const
@@ -1699,8 +1630,8 @@ void FBoxLevelEditor::FrameCamera()
 bool FBoxLevelEditor::HitCell(const FVector& World, FIntPoint& OutCell) const
 {
 	OutCell = FIntPoint(
-		FMath::FloorToInt(World.X / BoxGrid::CellSize),
-		FMath::FloorToInt(World.Y / BoxGrid::CellSize));
+		FMath::FloorToInt(World.X / BoxGrid::CellSize()),
+		FMath::FloorToInt(World.Y / BoxGrid::CellSize()));
 	return CurrentLevel && CurrentLevel->IsInside(OutCell);
 }
 
@@ -1850,65 +1781,6 @@ namespace
 			return Cell;
 		};
 		Level->PlayerSpawn = ClampCell(Level->PlayerSpawn);
-		TSet<FIntPoint> Used;
-		Used.Add(Level->PlayerSpawn);
-		auto Place = [&](FName DefId, FIntPoint Preferred)
-		{
-			FBoxLevelInstance* Found = Level->Instances.FindByPredicate([DefId](const FBoxLevelInstance& Inst)
-			{
-				return Inst.DefinitionId == DefId || Inst.GetResolvedDefinitionId() == DefId;
-			});
-			auto Occupied = [&](FIntPoint Cell)
-			{
-				if (Used.Contains(Cell))
-				{
-					return true;
-				}
-				for (const FBoxLevelInstance& Inst : Level->Instances)
-				{
-					if (Found && &Inst == Found)
-					{
-						continue;
-					}
-					if (Inst.Cell == Cell)
-					{
-						return true;
-					}
-				}
-				return false;
-			};
-			FIntPoint Cell = ClampCell(Preferred);
-			if (Occupied(Cell))
-			{
-				for (int32 Y = 0; Y < Level->Height; ++Y)
-				{
-					for (int32 X = 0; X < Level->Width; ++X)
-					{
-						const FIntPoint Try(X, Y);
-						if (!Occupied(Try))
-						{
-							Cell = Try;
-							Y = Level->Height;
-							break;
-						}
-					}
-				}
-			}
-			Used.Add(Cell);
-			if (Found)
-			{
-				Found->Cell = Cell;
-				return;
-			}
-			FBoxLevelInstance Inst;
-			Inst.InstanceId = *FString::Printf(TEXT("%s_0"), *DefId.ToString());
-			Inst.DefinitionId = DefId;
-			Inst.Definition = TSoftObjectPtr<UInteractableDef>(FSoftObjectPath(BoxAssetPaths::InteractableObject(DefId.ToString())));
-			Inst.Cell = Cell;
-			Level->Instances.Add(Inst);
-		};
-		Place(TEXT("Box_Normal"), FIntPoint(3, 3));
-		Place(TEXT("Target"), FIntPoint(5, 3));
 	}
 
 	class SBoxNewLevelDialog : public SCompoundWidget
@@ -1995,17 +1867,31 @@ namespace
 						+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0, 0, 8, 0)
 						[
 							SNew(SSpinBox<int32>)
-							.MinValue(ULevelData::MinSize).MaxValue(ULevelData::MaxSize)
+							.MinValue(ULevelData::MinSize)
+							.MaxValue(ULevelData::MaxSize)
+							.MinSliderValue(ULevelData::MinSize)
+							.MaxSliderValue(ULevelData::MaxSize)
+							.Delta(1)
 							.Value_Lambda([this] { return Width; })
-							.OnValueChanged_Lambda([this](int32 Value) { Width = Value; })
+							.OnValueChanged_Lambda([this](int32 Value)
+							{
+								Width = FMath::Clamp(Value, ULevelData::MinSize, ULevelData::MaxSize);
+							})
 						]
 						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Label(LOCTEXT("NewH", "高"))]
 						+ SHorizontalBox::Slot().FillWidth(1.f)
 						[
 							SNew(SSpinBox<int32>)
-							.MinValue(ULevelData::MinSize).MaxValue(ULevelData::MaxSize)
+							.MinValue(ULevelData::MinSize)
+							.MaxValue(ULevelData::MaxSize)
+							.MinSliderValue(ULevelData::MinSize)
+							.MaxSliderValue(ULevelData::MaxSize)
+							.Delta(1)
 							.Value_Lambda([this] { return Height; })
-							.OnValueChanged_Lambda([this](int32 Value) { Height = Value; })
+							.OnValueChanged_Lambda([this](int32 Value)
+							{
+								Height = FMath::Clamp(Value, ULevelData::MinSize, ULevelData::MaxSize);
+							})
 						]
 					]
 					+ SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 2)
@@ -2855,7 +2741,11 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeDetails()
 			[
 				DetailRow(LOCTEXT("Width", "宽"),
 					SNew(SSpinBox<int32>)
-					.MinValue(5).MaxValue(20)
+					.MinValue(ULevelData::MinSize)
+					.MaxValue(ULevelData::MaxSize)
+					.MinSliderValue(ULevelData::MinSize)
+					.MaxSliderValue(ULevelData::MaxSize)
+					.Delta(1)
 					.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
 					.Value_Lambda([this]
 					{
@@ -2874,7 +2764,11 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeDetails()
 			[
 				DetailRow(LOCTEXT("Height", "高"),
 					SNew(SSpinBox<int32>)
-					.MinValue(5).MaxValue(20)
+					.MinValue(ULevelData::MinSize)
+					.MaxValue(ULevelData::MaxSize)
+					.MinSliderValue(ULevelData::MinSize)
+					.MaxSliderValue(ULevelData::MaxSize)
+					.Delta(1)
 					.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
 					.Value_Lambda([this]
 					{

@@ -4,7 +4,7 @@
 
 UBoxProjectSettings::UBoxProjectSettings()
 {
-	UiPackRoot.Path = TEXT("../Asset/UI");
+	UiPackRoot.Path = TEXT("Asset/UI");
 	LevelCatalog = FSoftObjectPath(TEXT("/Game/Data/DT_LevelCatalog.DT_LevelCatalog"));
 	StartupLevel = FSoftObjectPath(TEXT("/Game/Data/Levels/BuiltIn/DA_Level_01.DA_Level_01"));
 	LevelDirectory = TEXT("/Game/Data/Levels/BuiltIn");
@@ -18,6 +18,14 @@ UBoxProjectSettings::UBoxProjectSettings()
 	MenuMap = FSoftObjectPath(TEXT("/Game/Maps/M_Menu.M_Menu"));
 	TerrainDirectory = TEXT("/Game/Data/Terrain");
 	InteractableDirectory = TEXT("/Game/Data/Interactables");
+	PlayerSprite = FSoftObjectPath(TEXT("/Game/Data/Characters/DA_PlayerSprite.DA_PlayerSprite"));
+	CellSize = 200.f;
+	OriginZ = 200.f;
+	TileFit = 0.975f;
+	StepDuration = 0.36f;
+	CameraOffset = FVector(0.f, 0.f, 3000.f);
+	CameraRotation = FRotator(-90.f, 90.f, 0.f);
+	CameraFOV = 50.f;
 }
 
 FName UBoxProjectSettings::GetCategoryName() const
@@ -41,7 +49,7 @@ static FString ResolveAgainstProject(const FString& Path)
 FString UBoxProjectSettings::ResolveUiPackRoot() const
 {
 	const FString Configured = UiPackRoot.Path.IsEmpty()
-		? FString(TEXT("../Asset/UI"))
+		? FString(TEXT("Asset/UI"))
 		: UiPackRoot.Path;
 	return ResolveAgainstProject(Configured);
 }

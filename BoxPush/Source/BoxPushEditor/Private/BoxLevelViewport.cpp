@@ -23,8 +23,8 @@ FBoxLevelViewportClient::FBoxLevelViewportClient(FAdvancedPreviewScene* InPrevie
 	EngineShowFlags.SetSelectionOutline(false);
 	bSetListenerPosition = false;
 	bUsingOrbitCamera = false;
-	ViewFOV = BoxPlayCamera::FieldOfView;
-	FOVAngle = BoxPlayCamera::FieldOfView;
+	ViewFOV = BoxPlayCamera::FieldOfView();
+	FOVAngle = BoxPlayCamera::FieldOfView();
 	OverrideNearClipPlane(1.f);
 	SetGameView(false);
 	ShowWidget(true);
@@ -78,10 +78,10 @@ void FBoxLevelViewportClient::FrameBoard()
 	}
 
 	bUsingOrbitCamera = false;
-	ViewFOV = BoxPlayCamera::FieldOfView;
-	FOVAngle = BoxPlayCamera::FieldOfView;
+	ViewFOV = BoxPlayCamera::FieldOfView();
+	FOVAngle = BoxPlayCamera::FieldOfView();
 	SetViewLocation(BoxPlayCamera::ViewLocation(Level->Width, Level->Height));
-	SetViewRotation(BoxPlayCamera::Rotation);
+	SetViewRotation(BoxPlayCamera::Rotation());
 	Invalidate();
 }
 
@@ -106,15 +106,15 @@ bool FBoxLevelViewportClient::MouseToCell(int32 MouseX, int32 MouseY, FIntPoint&
 	{
 		return false;
 	}
-	const float T = (BoxGrid::OriginZ - Origin.Z) / Dir.Z;
+	const float T = (BoxGrid::OriginZ() - Origin.Z) / Dir.Z;
 	if (T < 0.f)
 	{
 		return false;
 	}
 	const FVector Hit = Origin + Dir * T;
 	OutCell = FIntPoint(
-		FMath::FloorToInt(Hit.X / BoxGrid::CellSize),
-		FMath::FloorToInt(Hit.Y / BoxGrid::CellSize));
+		FMath::FloorToInt(Hit.X / BoxGrid::CellSize()),
+		FMath::FloorToInt(Hit.Y / BoxGrid::CellSize()));
 	return true;
 }
 
@@ -427,7 +427,7 @@ void FBoxLevelViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterfa
 	for (const FIntPoint& Cell : Pinned->GetHighlightCells())
 	{
 		const FVector Mark = BoxGrid::CellToWorld(Cell, 18.f);
-		const float Half = BoxGrid::CellSize * 0.48f;
+		const float Half = BoxGrid::CellSize() * 0.48f;
 		const FLinearColor MarkColor(0.95f, 0.28f, 0.22f);
 		const FVector A = Mark + FVector(-Half, -Half, 0.f);
 		const FVector B = Mark + FVector(Half, -Half, 0.f);
@@ -441,7 +441,7 @@ void FBoxLevelViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterfa
 	if (DropHover.IsSet())
 	{
 		const FVector Mark = BoxGrid::CellToWorld(DropHover.GetValue(), 22.f);
-		const float Half = BoxGrid::CellSize * 0.46f;
+		const float Half = BoxGrid::CellSize() * 0.46f;
 		const FLinearColor HoverColor(1.f, 0.78f, 0.08f);
 		const FVector A = Mark + FVector(-Half, -Half, 0.f);
 		const FVector B = Mark + FVector(Half, -Half, 0.f);
@@ -466,11 +466,11 @@ void FBoxLevelViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterfa
 			const FVector Forward(Dir.X, Dir.Y, 0.f);
 			const FVector Side(-static_cast<float>(Dir.Y), static_cast<float>(Dir.X), 0.f);
 			const FVector Center = BoxGrid::CellToWorld(Inst.Cell, bSelected ? 56.f : 40.f);
-			const float Len = BoxGrid::CellSize * 0.28f;
+			const float Len = BoxGrid::CellSize() * 0.28f;
 			const FVector Tail = Center - Forward * Len * 0.35f;
 			const FVector Tip = Center + Forward * Len;
 			const FVector HeadBase = Tip - Forward * (Len * 0.45f);
-			const float Head = BoxGrid::CellSize * 0.08f;
+			const float Head = BoxGrid::CellSize() * 0.08f;
 			const FLinearColor ArrowColor = bSelected
 				? FLinearColor(1.f, 0.78f, 0.08f)
 				: FLinearColor(0.75f, 0.75f, 0.7f);
@@ -488,7 +488,7 @@ void FBoxLevelViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterfa
 	}
 
 	const FVector Center = BoxGrid::CellToWorld(Cell, 24.f);
-	const float Half = BoxGrid::CellSize * 0.46f;
+	const float Half = BoxGrid::CellSize() * 0.46f;
 	const FLinearColor Color(1.f, 0.78f, 0.08f);
 	const FVector A = Center + FVector(-Half, -Half, 0.f);
 	const FVector B = Center + FVector(Half, -Half, 0.f);

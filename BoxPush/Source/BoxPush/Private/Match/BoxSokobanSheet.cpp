@@ -10,6 +10,7 @@
 #include "ImageUtils.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "Game/BoxProjectSettings.h"
 #include "Match/BoxGrid.h"
 
 namespace BoxSokoban
@@ -35,7 +36,7 @@ namespace BoxSokoban
 
 	float TileSpan()
 	{
-		return BoxGrid::CellSize * 0.975f;
+		return BoxGrid::CellSize() * GetDefault<UBoxProjectSettings>()->TileFit;
 	}
 
 	static UTexture2D* CropBgra(

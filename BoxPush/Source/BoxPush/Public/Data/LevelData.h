@@ -11,7 +11,7 @@ class BOXPUSH_API ULevelData : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
-	static constexpr int32 MinSize = 5;
+	static constexpr int32 MinSize = 1;
 	static constexpr int32 MaxSize = 20;
 	static constexpr int32 DefaultSize = 8;
 
@@ -24,10 +24,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display")
 	FString DesignerNote;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rules", meta = (ClampMin = "5", ClampMax = "20"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rules", meta = (ClampMin = "1", ClampMax = "20"))
 	int32 Width = DefaultSize;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rules", meta = (ClampMin = "5", ClampMax = "20"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rules", meta = (ClampMin = "1", ClampMax = "20"))
 	int32 Height = DefaultSize;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Terrain")

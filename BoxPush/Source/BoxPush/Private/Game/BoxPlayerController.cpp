@@ -40,8 +40,8 @@ void ABoxPlayerCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaT
 	}
 
 	OutVT.POV.Location = BoxPlayCamera::ViewLocation(Board->GetWidth(), Board->GetHeight());
-	OutVT.POV.Rotation = BoxPlayCamera::Rotation;
-	OutVT.POV.FOV = BoxPlayCamera::FieldOfView;
+	OutVT.POV.Rotation = BoxPlayCamera::Rotation();
+	OutVT.POV.FOV = BoxPlayCamera::FieldOfView();
 	OutVT.POV.ProjectionMode = ECameraProjectionMode::Perspective;
 	OutVT.POV.bConstrainAspectRatio = false;
 	OutVT.POV.bAutoCalculateOrthoPlanes = false;
@@ -107,14 +107,14 @@ void ABoxPlayerController::LockBoardView()
 	{
 		View = this;
 	}
-	SetControlRotation(BoxPlayCamera::Rotation);
+	SetControlRotation(BoxPlayCamera::Rotation());
 	if (APawn* Possessed = GetPawn())
 	{
-		Possessed->SetActorRotation(BoxPlayCamera::Rotation);
+		Possessed->SetActorRotation(BoxPlayCamera::Rotation());
 		if (ASpectatorPawn* Spectator = Cast<ASpectatorPawn>(Possessed))
 		{
-			Spectator->SetActorLocation(BoxPlayCamera::Offset);
-			Spectator->SetActorRotation(BoxPlayCamera::Rotation);
+			Spectator->SetActorLocation(BoxPlayCamera::Offset());
+			Spectator->SetActorRotation(BoxPlayCamera::Rotation());
 		}
 	}
 	SetViewTargetWithBlend(View, 0.f);

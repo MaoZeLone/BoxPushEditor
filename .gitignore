@@ -27,7 +27,6 @@ Desktop.ini
 # Local design and tool files; the repo tracks the UE project only
 .cursor/
 .cursorindexingignore
-Asset/
 editor-demo/
 web/
 文档/
