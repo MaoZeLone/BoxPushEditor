@@ -56,6 +56,7 @@ private:
 	void ApplyDeltas(const TArray<FBoxInstanceDelta>& Moves, bool bInstant);
 	void ApplyVisualCues(const TArray<FVisualTransitionCue>& Cues);
 	void SnapPlayer(FIntPoint Cell);
+	void FaceSpawn();
 	void FacePlayer(FIntPoint From, FIntPoint To);
 	void SetPlayerTags(FGameplayTag StateTag, bool bLocked);
 	void NotifyStatus();

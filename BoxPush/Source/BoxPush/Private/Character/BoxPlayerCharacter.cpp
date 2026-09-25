@@ -139,10 +139,6 @@ void ABoxPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 		EIC->BindAction(Action.InputAction, ETriggerEvent::Triggered, this, &ABoxPlayerCharacter::OnAbilityInputPressed, Action.InputTag);
 		EIC->BindAction(Action.InputAction, ETriggerEvent::Completed, this, &ABoxPlayerCharacter::OnAbilityInputReleased, Action.InputTag);
 	}
-	if (!Config->FindAbilityInputActionForTag(TAG_Input_Redo, false))
-	{
-		PlayerInputComponent->BindKey(EKeys::Y, IE_Pressed, this, &ABoxPlayerCharacter::OnRedoFallback);
-	}
 }
 
 ABoxGameMode* ABoxPlayerCharacter::FindGameMode() const
@@ -198,11 +194,6 @@ void ABoxPlayerCharacter::PerformGrantedAbility(FGameplayTag AbilityTag)
 	{
 		GameMode->RequestPause(this);
 	}
-}
-
-void ABoxPlayerCharacter::OnRedoFallback()
-{
-	PerformGrantedAbility(TAG_Ability_Redo);
 }
 
 void ABoxPlayerCharacter::SyncLocomotion()

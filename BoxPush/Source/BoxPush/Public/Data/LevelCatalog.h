@@ -14,7 +14,7 @@ struct BOXPUSH_API FLevelCatalogRow : public FTableRowBase
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Catalog")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Catalog", meta = (DisplayName = "关卡资产名"))
 	FName LevelId;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Catalog")

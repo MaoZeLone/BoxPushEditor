@@ -215,11 +215,11 @@ void ABoxInteractableActor::SetState(FName StateId)
 	{
 		return;
 	}
-	for (const FStateVisual& Row : Def->StateVisuals)
+	for (const FInteractableStateDef& State : Def->States)
 	{
-		if (Row.StateId == StateId)
+		if (State.StateId == StateId)
 		{
-			ApplyTasks(Row.Tasks);
+			ApplyTasks(State.Tasks);
 			break;
 		}
 	}
@@ -231,7 +231,7 @@ void ABoxInteractableActor::ApplyTransitionVisual(const FVisualTransitionCue& Cu
 	{
 		return;
 	}
-	for (const FTransitionVisual& Row : Def->TransitionVisuals)
+	for (const FInteractableTransitionDef& Row : Def->Transitions)
 	{
 		if (Row.Condition != Cue.Condition)
 		{

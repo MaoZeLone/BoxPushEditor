@@ -90,7 +90,7 @@ def tag(name):
     return value
 
 
-def state(state_id, display, default, event_id=None):
+def state(state_id, display, default, event_id=None, tasks=None):
     row = unreal.InteractableStateDef()
     row.set_editor_property("state_id", unreal.Name(state_id))
     row.set_editor_property("display_name", unreal.Text(display))
@@ -100,6 +100,8 @@ def state(state_id, display, default, event_id=None):
         action.set_editor_property("type", unreal.BoxStateActionType.FIRE_EVENT)
         action.set_editor_property("event_id", unreal.Name(event_id))
         row.set_editor_property("on_enter", [action])
+    if tasks:
+        row.set_editor_property("tasks", tasks)
     return row
 
 
@@ -165,17 +167,13 @@ def main():
     trigger.set_editor_property("logic_comps", [logic])
     trigger.set_editor_property("states", [
         state("Empty", "空", True, "WallClose"),
-        state("Held", "压住", False, "WallOpen"),
+        state("Held", "压住", False, "WallOpen", [sprite_task("Sprite", 64, 64, 64, 64, texture)]),
     ])
     trigger.set_editor_property("transitions", [
         overlap("Empty", unreal.BoxTransitionCondition.BEGIN_OVERLAP, "Held"),
         overlap("Held", unreal.BoxTransitionCondition.END_OVERLAP, "Empty"),
     ])
     set_rect(trigger, 64, 256, 64, 64, 4.0, texture)
-    held = unreal.StateVisual()
-    held.set_editor_property("state_id", unreal.Name("Held"))
-    held.set_editor_property("tasks", [sprite_task("Sprite", 64, 64, 64, 64, texture)])
-    trigger.set_editor_property("state_visuals", [held])
     trigger.set_editor_property("palette_color", unreal.LinearColor(0.95, 0.75, 0.2, 1.0))
     save(trigger, "DA_Trigger")
 
@@ -189,17 +187,13 @@ def main():
     gate.set_editor_property("logic_comps", [blocking])
     gate.set_editor_property("states", [
         state("Closed", "挡住", True),
-        state("Open", "消失", False),
+        state("Open", "消失", False, None, [visible_task(False), blocking_task(False, False)]),
     ])
     gate.set_editor_property("transitions", [
         on_event("Closed", "WallOpen", "Open"),
         on_event("Open", "WallClose", "Closed"),
     ])
     set_rect(gate, 320, 448, 64, 64, 10.0, texture)
-    opened = unreal.StateVisual()
-    opened.set_editor_property("state_id", unreal.Name("Open"))
-    opened.set_editor_property("tasks", [visible_task(False), blocking_task(False, False)])
-    gate.set_editor_property("state_visuals", [opened])
     gate.set_editor_property("palette_color", unreal.LinearColor(0.45, 0.48, 0.55, 1.0))
     save(gate, "DA_Gate")
 

@@ -15,7 +15,7 @@ public:
 	static constexpr int32 MaxSize = 20;
 	static constexpr int32 DefaultSize = 1;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display", AssetRegistrySearchable)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display", meta = (DisplayName = "关卡资产名"), AssetRegistrySearchable)
 	FName LevelId;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display", meta = (DisplayName = "显示名"), AssetRegistrySearchable)
@@ -36,6 +36,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
 	FIntPoint PlayerSpawn = FIntPoint(0, 0);
+
+	/** 0 上、1 右、2 下、3 左。和交互物朝向同一套。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement", meta = (ClampMin = "0", ClampMax = "3", DisplayName = "朝向"))
+	int32 PlayerYawSteps = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
 	TArray<FBoxLevelInstance> Instances;

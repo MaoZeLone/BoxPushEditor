@@ -105,6 +105,7 @@ public:
 	FName GetLevelId() const;
 	FIntPoint GetPlayerCell() const { return PlayerCell; }
 	void SetPlayerCell(FIntPoint Cell) { PlayerCell = Cell; }
+	int32 GetPlayerYawSteps() const { return PlayerYawSteps; }
 	int32 GetWidth() const { return Width; }
 	int32 GetHeight() const { return Height; }
 	const ULevelData* GetSourceLevel() const { return SourceLevel; }
@@ -135,6 +136,7 @@ private:
 	TArray<FBoxRuntimeInstance> Instances;
 
 	FIntPoint PlayerCell = FIntPoint::ZeroValue;
+	int32 PlayerYawSteps = 0;
 	int32 Width = 0;
 	int32 Height = 0;
 };

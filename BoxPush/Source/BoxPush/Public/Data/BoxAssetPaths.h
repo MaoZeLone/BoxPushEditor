@@ -68,4 +68,8 @@ namespace BoxAssetPaths
 	{
 		return Settings()->MenuMap.ToString();
 	}
+	inline FString SaveSlot()
+	{
+		return Settings()->SaveSlot;
+	}
 }

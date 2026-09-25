@@ -91,11 +91,11 @@ void ULevelCatalogLibrary::ValidateCatalog(const UDataTable* Catalog, TArray<FLe
 		const FName Id = Row.LevelId.IsNone() ? RowName : Row.LevelId;
 		if (Id != RowName)
 		{
-			AddIssue(OutIssues, true, FString::Printf(TEXT("行名 %s 与 LevelId %s 不一致"), *RowName.ToString(), *Id.ToString()));
+			AddIssue(OutIssues, true, FString::Printf(TEXT("行名 %s 与关卡资产名 %s 不一致"), *RowName.ToString(), *Id.ToString()));
 		}
 		if (SeenIds.Contains(Id))
 		{
-			AddIssue(OutIssues, true, FString::Printf(TEXT("总表 LevelId 重复：%s"), *Id.ToString()));
+			AddIssue(OutIssues, true, FString::Printf(TEXT("总表关卡资产名重复：%s"), *Id.ToString()));
 		}
 		SeenIds.Add(Id);
 
@@ -109,7 +109,7 @@ void ULevelCatalogLibrary::ValidateCatalog(const UDataTable* Catalog, TArray<FLe
 		{
 			if (Level->LevelId != Id)
 			{
-				AddIssue(OutIssues, true, FString::Printf(TEXT("%s 的 DA.LevelId 与总表不一致"), *Id.ToString()));
+				AddIssue(OutIssues, true, FString::Printf(TEXT("%s 的关卡资产名与总表不一致"), *Id.ToString()));
 			}
 		}
 	});

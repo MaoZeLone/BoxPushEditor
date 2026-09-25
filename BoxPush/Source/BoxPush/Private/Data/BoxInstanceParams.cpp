@@ -522,13 +522,13 @@ namespace BoxInstanceParams
 		{
 			return nullptr;
 		}
-		for (const FStateVisual& Row : Inst.Def->StateVisuals)
+		for (const FInteractableStateDef& State : Inst.Def->States)
 		{
-			if (Row.StateId != Inst.CurrentState)
+			if (State.StateId != Inst.CurrentState)
 			{
 				continue;
 			}
-			for (const FVisualTask& Task : Row.Tasks)
+			for (const FVisualTask& Task : State.Tasks)
 			{
 				if (Task.Type == EVisualTaskType::SetBlocking)
 				{
@@ -627,5 +627,31 @@ namespace BoxInstanceParams
 			return FGameplayTag();
 		}
 		return ResolveTag(Inst.Overrides, Trigger->CompId, GET_MEMBER_NAME_CHECKED(UTriggerLogic, AcceptType), Trigger->AcceptType, Trigger->bAllowAcceptType);
+	}
+
+	FName OccupiedEvent(const FBoxRuntimeInstance& Inst)
+	{
+		if (const UGoalLogic* Goal = Inst.Def ? Inst.Def->FindLogic<UGoalLogic>() : nullptr)
+		{
+			return ResolveName(Inst.Overrides, Goal->CompId, GET_MEMBER_NAME_CHECKED(UGoalLogic, OccupiedEvent), Goal->OccupiedEvent, Goal->bAllowOccupiedEvent);
+		}
+		if (const UPedalLogic* Pedal = Inst.Def ? Inst.Def->FindLogic<UPedalLogic>() : nullptr)
+		{
+			return ResolveName(Inst.Overrides, Pedal->CompId, GET_MEMBER_NAME_CHECKED(UPedalLogic, OccupiedEvent), Pedal->OccupiedEvent, Pedal->bAllowOccupiedEvent);
+		}
+		return NAME_None;
+	}
+
+	FName ClearedEvent(const FBoxRuntimeInstance& Inst)
+	{
+		if (const UGoalLogic* Goal = Inst.Def ? Inst.Def->FindLogic<UGoalLogic>() : nullptr)
+		{
+			return ResolveName(Inst.Overrides, Goal->CompId, GET_MEMBER_NAME_CHECKED(UGoalLogic, ClearedEvent), Goal->ClearedEvent, Goal->bAllowClearedEvent);
+		}
+		if (const UPedalLogic* Pedal = Inst.Def ? Inst.Def->FindLogic<UPedalLogic>() : nullptr)
+		{
+			return ResolveName(Inst.Overrides, Pedal->CompId, GET_MEMBER_NAME_CHECKED(UPedalLogic, ClearedEvent), Pedal->ClearedEvent, Pedal->bAllowClearedEvent);
+		}
+		return NAME_None;
 	}
 }

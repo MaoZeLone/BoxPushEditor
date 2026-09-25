@@ -41,6 +41,8 @@ namespace BoxInstanceParams
 	BOXPUSH_API FGameplayTag RequiredType(const FBoxRuntimeInstance& Inst);
 	BOXPUSH_API FGameplayTag AcceptType(const FBoxRuntimeInstance& Inst);
 	BOXPUSH_API FGameplayTag TriggerAcceptType(const FBoxRuntimeInstance& Inst);
+	BOXPUSH_API FName OccupiedEvent(const FBoxRuntimeInstance& Inst);
+	BOXPUSH_API FName ClearedEvent(const FBoxRuntimeInstance& Inst);
 	BOXPUSH_API FName ResolveOverriddenName(const TArray<FBoxInstanceOverride>& Overrides, FName CompId, FName Key, FName Default);
 
 	inline FName FireEventOverrideKey(EBoxStateActionPhase Phase, int32 Index)

@@ -49,6 +49,9 @@ private:
 	TObjectPtr<UTextBlock> PlaytestText;
 
 	UPROPERTY()
+	TObjectPtr<UWidget> HintPanel;
+
+	UPROPERTY()
 	TObjectPtr<UButton> PauseButton;
 
 	UPROPERTY()

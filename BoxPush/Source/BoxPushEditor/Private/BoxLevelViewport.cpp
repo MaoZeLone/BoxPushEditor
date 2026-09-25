@@ -35,9 +35,15 @@ FBoxLevelViewportClient::FBoxLevelViewportClient(FAdvancedPreviewScene* InPrevie
 bool FBoxLevelViewportClient::IsPaintMouse(FKey Key) const
 {
 	TSharedPtr<FBoxLevelEditor> Pinned = Editor.Pin();
-	return Pinned && Pinned->GetMode() == EBoxEditorMode::Place && !Pinned->IsPlaying()
-		&& !IsAltPressed() && !IsCtrlPressed() && !IsShiftPressed()
-		&& (Key == EKeys::LeftMouseButton || Key == EKeys::RightMouseButton);
+	if (!Pinned || Pinned->IsPlaying() || IsAltPressed() || IsCtrlPressed() || IsShiftPressed())
+	{
+		return false;
+	}
+	if (Key == EKeys::RightMouseButton)
+	{
+		return Pinned->GetMode() == EBoxEditorMode::Place || Pinned->GetMode() == EBoxEditorMode::Configure;
+	}
+	return Pinned->GetMode() == EBoxEditorMode::Place && Key == EKeys::LeftMouseButton;
 }
 
 bool FBoxLevelViewportClient::IsSelectMouse(FKey Key) const
@@ -45,7 +51,7 @@ bool FBoxLevelViewportClient::IsSelectMouse(FKey Key) const
 	TSharedPtr<FBoxLevelEditor> Pinned = Editor.Pin();
 	return Pinned && Pinned->GetMode() == EBoxEditorMode::Configure && !Pinned->IsPlaying()
 		&& !IsAltPressed() && !IsCtrlPressed() && !IsShiftPressed()
-		&& (Key == EKeys::LeftMouseButton || Key == EKeys::RightMouseButton);
+		&& Key == EKeys::LeftMouseButton;
 }
 
 EMouseCaptureMode FBoxLevelViewportClient::GetMouseCaptureMode() const
@@ -60,7 +66,12 @@ bool FBoxLevelViewportClient::HideCursorDuringCapture() const
 
 bool FBoxLevelViewportClient::RequiresUncapturedAxisInput() const
 {
-	return !bWidgetDragging && !bObjectPress && !bObjectDragging;
+	return !bWidgetDragging && !bObjectPress && !bObjectDragging && !bBoardPanning;
+}
+
+bool FBoxLevelViewportClient::ShouldOrbitCamera() const
+{
+	return false;
 }
 
 void FBoxLevelViewportClient::FrameBoard()
@@ -85,7 +96,7 @@ void FBoxLevelViewportClient::FrameBoard()
 	Invalidate();
 }
 
-bool FBoxLevelViewportClient::MouseToCell(int32 MouseX, int32 MouseY, FIntPoint& OutCell)
+bool FBoxLevelViewportClient::MouseToBoard(int32 MouseX, int32 MouseY, FVector& OutHit)
 {
 	if (!Viewport)
 	{
@@ -111,11 +122,63 @@ bool FBoxLevelViewportClient::MouseToCell(int32 MouseX, int32 MouseY, FIntPoint&
 	{
 		return false;
 	}
-	const FVector Hit = Origin + Dir * T;
+	OutHit = Origin + Dir * T;
+	return true;
+}
+
+bool FBoxLevelViewportClient::MouseToCell(int32 MouseX, int32 MouseY, FIntPoint& OutCell)
+{
+	FVector Hit;
+	if (!MouseToBoard(MouseX, MouseY, Hit))
+	{
+		return false;
+	}
 	OutCell = FIntPoint(
 		FMath::FloorToInt(Hit.X / BoxGrid::CellSize()),
 		FMath::FloorToInt(Hit.Y / BoxGrid::CellSize()));
 	return true;
+}
+
+void FBoxLevelViewportClient::BeginBoardPan(int32 MouseX, int32 MouseY)
+{
+	FVector Hit;
+	if (!MouseToBoard(MouseX, MouseY, Hit))
+	{
+		return;
+	}
+	bBoardPanning = true;
+	PanGrabWorld = Hit;
+	SetViewRotation(BoxPlayCamera::Rotation());
+}
+
+void FBoxLevelViewportClient::UpdateBoardPan(int32 MouseX, int32 MouseY)
+{
+	if (!bBoardPanning)
+	{
+		BeginBoardPan(MouseX, MouseY);
+		return;
+	}
+	FVector Hit;
+	if (!MouseToBoard(MouseX, MouseY, Hit))
+	{
+		return;
+	}
+	const FVector Delta = PanGrabWorld - Hit;
+	if (Delta.SizeSquared2D() < KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+	FVector Loc = GetViewLocation();
+	Loc.X += Delta.X;
+	Loc.Y += Delta.Y;
+	SetViewLocation(Loc);
+	SetViewRotation(BoxPlayCamera::Rotation());
+	Invalidate();
+}
+
+void FBoxLevelViewportClient::EndBoardPan()
+{
+	bBoardPanning = false;
 }
 
 void FBoxLevelViewportClient::PaintAtCursor(int32 MouseX, int32 MouseY, bool bErase)
@@ -253,7 +316,12 @@ ECoordSystem FBoxLevelViewportClient::GetWidgetCoordSystemSpace() const
 void FBoxLevelViewportClient::TrackingStarted(const FInputEventState& InInputState, bool bIsDraggingWidget, bool bNudge)
 {
 	FEditorViewportClient::TrackingStarted(InInputState, bIsDraggingWidget, bNudge);
-	if (bIsDraggingWidget)
+	const bool bMiddlePan = Viewport && Viewport->KeyState(EKeys::MiddleMouseButton) && !IsAltPressed();
+	if (bMiddlePan)
+	{
+		SetCurrentWidgetAxis(EAxisList::None);
+	}
+	if (bIsDraggingWidget && !bMiddlePan)
 	{
 		bWidgetDragging = true;
 		WidgetDrag = FVector::ZeroVector;
@@ -285,6 +353,10 @@ bool FBoxLevelViewportClient::InputWidgetDelta(FViewport* InViewport, EAxisList:
 	(void)Drag;
 	(void)Rot;
 	(void)Scale;
+	if (!bWidgetDragging || (InViewport && InViewport->KeyState(EKeys::MiddleMouseButton)))
+	{
+		return false;
+	}
 	TSharedPtr<FBoxLevelEditor> Pinned = Editor.Pin();
 	if (!Pinned || !HasMoveWidget() || !InViewport)
 	{
@@ -479,6 +551,23 @@ void FBoxLevelViewportClient::Draw(const FSceneView* View, FPrimitiveDrawInterfa
 			PDI->DrawLine(Tip, HeadBase + Side * Head, ArrowColor, SDPG_Foreground, Thickness, 0.f, true);
 			PDI->DrawLine(Tip, HeadBase - Side * Head, ArrowColor, SDPG_Foreground, Thickness, 0.f, true);
 		}
+		const bool bPlayerSelected = Pinned->GetSelectionKind() == EBoxSceneSelection::Player;
+		const FIntPoint PlayerDir = BoxFacing::ToDir(Level->PlayerYawSteps);
+		const FVector PlayerForward(PlayerDir.X, PlayerDir.Y, 0.f);
+		const FVector PlayerSide(-static_cast<float>(PlayerDir.Y), static_cast<float>(PlayerDir.X), 0.f);
+		const FVector PlayerCenter = BoxGrid::CellToWorld(Level->PlayerSpawn, bPlayerSelected ? 56.f : 40.f);
+		const float PlayerLen = BoxGrid::CellSize() * 0.28f;
+		const FVector PlayerTail = PlayerCenter - PlayerForward * PlayerLen * 0.35f;
+		const FVector PlayerTip = PlayerCenter + PlayerForward * PlayerLen;
+		const FVector PlayerHeadBase = PlayerTip - PlayerForward * (PlayerLen * 0.45f);
+		const float PlayerHead = BoxGrid::CellSize() * 0.08f;
+		const FLinearColor PlayerArrow = bPlayerSelected
+			? FLinearColor(1.f, 0.78f, 0.08f)
+			: FLinearColor(0.45f, 0.72f, 0.95f);
+		const float PlayerThickness = bPlayerSelected ? 2.5f : 1.5f;
+		PDI->DrawLine(PlayerTail, PlayerTip, PlayerArrow, SDPG_Foreground, PlayerThickness, 0.f, true);
+		PDI->DrawLine(PlayerTip, PlayerHeadBase + PlayerSide * PlayerHead, PlayerArrow, SDPG_Foreground, PlayerThickness, 0.f, true);
+		PDI->DrawLine(PlayerTip, PlayerHeadBase - PlayerSide * PlayerHead, PlayerArrow, SDPG_Foreground, PlayerThickness, 0.f, true);
 	}
 
 	FIntPoint Cell;
@@ -527,6 +616,14 @@ void FBoxLevelViewportClient::Tick(float DeltaSeconds)
 	}
 	const int32 X = Viewport->GetMouseX();
 	const int32 Y = Viewport->GetMouseY();
+	if (Viewport->KeyState(EKeys::MiddleMouseButton))
+	{
+		UpdateBoardPan(X, Y);
+	}
+	else if (bBoardPanning)
+	{
+		EndBoardPan();
+	}
 	const bool bPainting = (Viewport->KeyState(EKeys::LeftMouseButton) && IsPaintMouse(EKeys::LeftMouseButton))
 		|| (Viewport->KeyState(EKeys::RightMouseButton) && IsPaintMouse(EKeys::RightMouseButton));
 	if (TSharedPtr<FBoxLevelEditor> Pinned = Editor.Pin())
@@ -577,6 +674,10 @@ void FBoxLevelViewportClient::Tick(float DeltaSeconds)
 
 void FBoxLevelViewportClient::ProcessClick(FSceneView& View, HHitProxy* HitProxy, FKey Key, EInputEvent Event, uint32 HitX, uint32 HitY)
 {
+	if (Key == EKeys::MiddleMouseButton || (Key == EKeys::LeftMouseButton && IsAltPressed()))
+	{
+		return;
+	}
 	if (IsMoveWidgetAxis(HitProxy))
 	{
 		FEditorViewportClient::ProcessClick(View, HitProxy, Key, Event, HitX, HitY);
@@ -598,6 +699,23 @@ void FBoxLevelViewportClient::ProcessClick(FSceneView& View, HHitProxy* HitProxy
 
 bool FBoxLevelViewportClient::InputKey(const FInputKeyEventArgs& EventArgs)
 {
+	if (EventArgs.Key == EKeys::MiddleMouseButton)
+	{
+		if (EventArgs.Event == IE_Pressed && EventArgs.Viewport)
+		{
+			BeginBoardPan(EventArgs.Viewport->GetMouseX(), EventArgs.Viewport->GetMouseY());
+		}
+		else if (EventArgs.Event == IE_Released)
+		{
+			EndBoardPan();
+		}
+		return true;
+	}
+	if (EventArgs.Key == EKeys::LeftMouseButton && IsAltPressed())
+	{
+		return true;
+	}
+
 	if (ShouldForwardMouseToWidget(EventArgs.Key))
 	{
 		return FEditorViewportClient::InputKey(EventArgs);
@@ -678,10 +796,25 @@ bool FBoxLevelViewportClient::InputKey(const FInputKeyEventArgs& EventArgs)
 	return FEditorViewportClient::InputKey(EventArgs);
 }
 
+void FBoxLevelViewportClient::MouseMove(FViewport* InViewport, int32 X, int32 Y)
+{
+	if (bBoardPanning || (InViewport && InViewport->KeyState(EKeys::MiddleMouseButton)))
+	{
+		UpdateBoardPan(X, Y);
+		return;
+	}
+	FEditorViewportClient::MouseMove(InViewport, X, Y);
+}
+
 void FBoxLevelViewportClient::CapturedMouseMove(FViewport* InViewport, int32 InMouseX, int32 InMouseY)
 {
 	if (!InViewport)
 	{
+		return;
+	}
+	if (bBoardPanning || InViewport->KeyState(EKeys::MiddleMouseButton))
+	{
+		UpdateBoardPan(InMouseX, InMouseY);
 		return;
 	}
 	if (bObjectPress || bObjectDragging)

@@ -389,7 +389,7 @@ void FBoxLevelEditor::Initialize()
 {
 	PreviewScene = MakeUnique<FAdvancedPreviewScene>(FPreviewScene::ConstructionValues());
 	PreviewScene->SetFloorVisibility(false);
-	Status = TEXT("就绪");
+	Status = TEXT("普通模式 · 左键点选，按住物体或拖坐标轴移动");
 	BindAssetRegistry();
 	RebuildPalette();
 	RebuildLevelList();
@@ -494,6 +494,7 @@ FBoxLevelEditor::FBoxEditSnapshot FBoxLevelEditor::CaptureEdit() const
 	Snap.Cells = CurrentLevel->Cells;
 	Snap.Instances = CurrentLevel->Instances;
 	Snap.PlayerSpawn = CurrentLevel->PlayerSpawn;
+	Snap.PlayerYawSteps = CurrentLevel->PlayerYawSteps;
 	Snap.Width = CurrentLevel->Width;
 	Snap.Height = CurrentLevel->Height;
 	Snap.DisplayName = CurrentLevel->DisplayName;
@@ -503,7 +504,7 @@ FBoxLevelEditor::FBoxEditSnapshot FBoxLevelEditor::CaptureEdit() const
 
 bool FBoxLevelEditor::SameEdit(const FBoxEditSnapshot& A, const FBoxEditSnapshot& B) const
 {
-	if (A.Width != B.Width || A.Height != B.Height || A.PlayerSpawn != B.PlayerSpawn
+	if (A.Width != B.Width || A.Height != B.Height || A.PlayerSpawn != B.PlayerSpawn || A.PlayerYawSteps != B.PlayerYawSteps
 		|| A.DesignerNote != B.DesignerNote || !A.DisplayName.EqualTo(B.DisplayName)
 		|| A.Cells != B.Cells || A.Instances.Num() != B.Instances.Num())
 	{
@@ -534,6 +535,7 @@ void FBoxLevelEditor::ApplyEdit(const FBoxEditSnapshot& Snap)
 	CurrentLevel->Cells = Snap.Cells;
 	CurrentLevel->Instances = Snap.Instances;
 	CurrentLevel->PlayerSpawn = Snap.PlayerSpawn;
+	CurrentLevel->PlayerYawSteps = Snap.PlayerYawSteps;
 	CurrentLevel->Width = Snap.Width;
 	CurrentLevel->Height = Snap.Height;
 	CurrentLevel->DisplayName = Snap.DisplayName;
@@ -637,13 +639,13 @@ FText FBoxLevelEditor::GetControlsHint() const
 {
 	if (bPlaying)
 	{
-		return LOCTEXT("PlayHint", "WASD 移动\nZ 撤销   Y 重做\nR 重开   Esc 停止\n中键平移\nAlt+左键旋转\n滚轮缩放   F 归位");
+		return LOCTEXT("PlayHint", "WASD 移动\nZ 撤销   Y 重做\nR 重开   Esc 停止\n中键平移\n滚轮缩放   F 归位");
 	}
 	if (Mode == EBoxEditorMode::Configure)
 	{
-		return LOCTEXT("ConfigHint", "左键选中物体\n按住物体拖到格子\n拖坐标轴也能移动\nDelete 删除此物体\n右键取消选中\nCtrl+Z 撤销\n中键平移\nAlt+左键旋转\n滚轮缩放   F 归位");
+		return LOCTEXT("ConfigHint", "左键选中物体\n按住物体拖到格子\n拖坐标轴也能移动\n右键删除   Delete 删除此物体\nCtrl+Z 撤销\n中键平移\n滚轮缩放   F 归位");
 	}
-	return LOCTEXT("EditHint", "左键铺设   右键只擦物体\nCtrl+Z 撤销   Ctrl+Y 重做\n中键平移\nAlt+左键旋转\n滚轮缩放   F 归位");
+	return LOCTEXT("EditHint", "左键铺设   右键擦物体和地板\nCtrl+Z 撤销   Ctrl+Y 重做\n中键平移\n滚轮缩放   F 归位");
 }
 
 UDataTable* FBoxLevelEditor::LoadCatalog() const
@@ -1454,13 +1456,28 @@ void FBoxLevelEditor::SetSelectedCell(FIntPoint Cell)
 
 void FBoxLevelEditor::SetSelectedYaw(int32 YawSteps)
 {
-	FBoxLevelInstance* Inst = FindSelectedInstance();
-	if (!Inst || !CurrentLevel || bPlaying)
+	if (!CurrentLevel || bPlaying)
 	{
 		return;
 	}
 	YawSteps = BoxFacing::Normalize(YawSteps);
-	if (Inst->YawSteps == YawSteps)
+	if (SelectionKind == EBoxSceneSelection::Player)
+	{
+		if (CurrentLevel->PlayerYawSteps == YawSteps)
+		{
+			return;
+		}
+		FBoxEditScope Scope(this);
+		CurrentLevel->PlayerYawSteps = YawSteps;
+		CurrentLevel->MarkPackageDirty();
+		static const TCHAR* Names[] = {TEXT("上"), TEXT("右"), TEXT("下"), TEXT("左")};
+		Status = FString::Printf(TEXT("%s 朝%s"), *GetSelectedTitle().ToString(), Names[YawSteps]);
+		RefreshPreview();
+		NotifyChanged();
+		return;
+	}
+	FBoxLevelInstance* Inst = FindSelectedInstance();
+	if (!Inst || Inst->YawSteps == YawSteps)
 	{
 		return;
 	}
@@ -1745,7 +1762,7 @@ namespace
 	{
 		if (Id.IsEmpty())
 		{
-			return LOCTEXT("NeedId", "填写关卡 ID");
+			return LOCTEXT("NeedId", "填写关卡资产名");
 		}
 		if (!IsLevelIdToken(Id))
 		{
@@ -1753,7 +1770,7 @@ namespace
 		}
 		if (Used.Contains(*Id))
 		{
-			return LOCTEXT("DupId", "这个 ID 已经有了");
+			return LOCTEXT("DupId", "这个资产名已经有了");
 		}
 		return FText::GetEmpty();
 	}
@@ -1843,7 +1860,7 @@ namespace
 					+ SVerticalBox::Slot().AutoHeight().Padding(0, 4)
 					[
 						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Label(LOCTEXT("NewId", "关卡 ID"))]
+						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Label(LOCTEXT("NewId", "关卡资产名"))]
 						+ SHorizontalBox::Slot().FillWidth(1.f)
 						[
 							SNew(SEditableTextBox)
@@ -2010,19 +2027,63 @@ void FBoxLevelEditor::DeleteLevel()
 	{
 		return;
 	}
-	UDataTable* Catalog = LoadCatalog();
-	if (Catalog)
+	const FText Name = CurrentLevel->DisplayName.IsEmpty()
+		? FText::FromName(CurrentLevel->LevelId)
+		: CurrentLevel->DisplayName;
+	const EAppReturnType::Type Answer = FMessageDialog::Open(
+		EAppMsgType::YesNo,
+		FText::Format(LOCTEXT("DeleteLevelAsk", "确定删除关卡「{0}」？会先从关卡目录去掉这一行，再删除关卡资产。"), Name));
+	if (Answer != EAppReturnType::Yes)
 	{
-		Catalog->RemoveRow(CurrentLevel->LevelId);
-		Catalog->MarkPackageDirty();
+		return;
 	}
+	UDataTable* Catalog = LoadCatalog();
+	if (!Catalog)
+	{
+		Status = TEXT("找不到关卡目录，没有删除");
+		NotifyChanged();
+		return;
+	}
+	const FName LevelId = CurrentLevel->LevelId;
+	const FSoftObjectPath LevelPath(CurrentLevel);
+	TArray<FName> RowNames;
+	Catalog->ForeachRow<FLevelCatalogRow>(TEXT("BoxDeleteLevel"), [&](const FName& RowName, const FLevelCatalogRow& Row)
+	{
+		const bool bSameId = RowName == LevelId || Row.LevelId == LevelId;
+		const bool bSameAsset = Row.LevelAsset.Get() == CurrentLevel || Row.LevelAsset.ToSoftObjectPath() == LevelPath;
+		if (bSameId || bSameAsset)
+		{
+			RowNames.Add(RowName);
+		}
+	});
+	for (const FName& RowName : RowNames)
+	{
+		Catalog->RemoveRow(RowName);
+	}
+	Catalog->MarkPackageDirty();
+	TArray<UPackage*> CatalogPackages;
+	CatalogPackages.Add(Catalog->GetOutermost());
+	FEditorFileUtils::PromptForCheckoutAndSave(CatalogPackages, false, false);
+
 	TArray<UObject*> ToDelete;
 	ToDelete.Add(CurrentLevel);
-	ObjectTools::DeleteObjects(ToDelete, true);
 	CurrentLevel = nullptr;
 	ResetSelection();
 	ClearEditHistory();
+	if (MatchWorld && IsValid(MatchWorld))
+	{
+		MatchWorld->StartLevel(nullptr);
+	}
+
+	const int32 Deleted = ObjectTools::ForceDeleteObjects(ToDelete, false);
 	RebuildLevelList();
+	if (Deleted <= 0)
+	{
+		Status = TEXT("关卡目录已去掉这一行，但资产没能删除");
+		NotifyChanged();
+		return;
+	}
+	Status = FString::Printf(TEXT("已删除关卡 %s"), *Name.ToString());
 	if (LevelItems.Num() > 0)
 	{
 		SelectLevel(LevelItems[0]->Resolve());
@@ -2233,15 +2294,17 @@ void FBoxLevelEditor::PaintCell(FIntPoint Cell, bool bErase)
 		if (Removed == 0)
 		{
 			const ETerrainCell Terrain = CurrentLevel->GetCell(Cell);
-			if (Terrain == ETerrainCell::Wall || Terrain == ETerrainCell::Empty)
+			if (Terrain == ETerrainCell::Wall)
 			{
 				CurrentLevel->SetCell(Cell, ETerrainCell::Floor);
+			}
+			else if (Terrain == ETerrainCell::Floor)
+			{
+				CurrentLevel->SetCell(Cell, ETerrainCell::Empty);
 			}
 			else
 			{
 				CurrentLevel->FitToContent();
-				Status = TEXT("这一格没有可擦的物体");
-				NotifyChanged();
 				return;
 			}
 		}
@@ -2561,7 +2624,15 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeToolbar()
 		]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2)
 		[
-			SNew(SButton).Text(LOCTEXT("Stop", "停止"))
+			SNew(SButton)
+			.Text(LOCTEXT("Stop", "停止"))
+			.ButtonStyle(FAppStyle::Get(), "FlatButton.Danger")
+			.ForegroundColor_Lambda([this]
+			{
+				return Editor && Editor->IsPlaying()
+					? FSlateColor(FLinearColor(1.f, 0.22f, 0.2f))
+					: FSlateColor::UseForeground();
+			})
 			.IsEnabled_Lambda([this] { return Editor && Editor->IsPlaying(); })
 			.OnClicked(this, &SBoxLevelEditor::OnStop)
 		]
@@ -2657,7 +2728,7 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeDetails()
 			]
 			+ SVerticalBox::Slot().AutoHeight()
 			[
-				DetailRow(LOCTEXT("LevelId", "关卡 ID"),
+				DetailRow(LOCTEXT("LevelId", "关卡资产名"),
 					SNew(SEditableTextBox)
 					.IsReadOnly(true)
 					.Text_Lambda([this]
@@ -2774,7 +2845,7 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeDetails()
 			+ SVerticalBox::Slot().AutoHeight().Padding(10, 12, 10, 8)
 			[
 				SNew(SButton)
-				.Text(LOCTEXT("Delete", "删除资产"))
+				.Text(LOCTEXT("Delete", "删除关卡"))
 				.IsEnabled_Lambda([this] { return Editor && Editor->GetLevel() && !Editor->IsPlaying(); })
 				.OnClicked(this, &SBoxLevelEditor::OnDelete)
 			]
@@ -2790,6 +2861,29 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeSelectionDetails()
 	auto IsInstance = [this]
 	{
 		return Editor && Editor->GetSelectionKind() == EBoxSceneSelection::Instance;
+	};
+	auto CanFace = [this]
+	{
+		if (!Editor)
+		{
+			return false;
+		}
+		const EBoxSceneSelection Kind = Editor->GetSelectionKind();
+		return Kind == EBoxSceneSelection::Instance || Kind == EBoxSceneSelection::Player;
+	};
+	auto SelectedYaw = [this]() -> int32
+	{
+		if (!Editor)
+		{
+			return -1;
+		}
+		if (Editor->GetSelectionKind() == EBoxSceneSelection::Player)
+		{
+			const ULevelData* Level = Editor->GetLevel();
+			return Level ? BoxFacing::Normalize(Level->PlayerYawSteps) : 0;
+		}
+		const FBoxLevelInstance* Inst = Editor->GetSelectedInstance();
+		return Inst ? BoxFacing::Normalize(Inst->YawSteps) : -1;
 	};
 
 	return SNew(SScrollBox)
@@ -2945,7 +3039,7 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeSelectionDetails()
 			+ SVerticalBox::Slot().AutoHeight()
 			[
 				SNew(SBox)
-				.Visibility_Lambda([IsInstance] { return IsInstance() ? EVisibility::Visible : EVisibility::Collapsed; })
+				.Visibility_Lambda([CanFace] { return CanFace() ? EVisibility::Visible : EVisibility::Collapsed; })
 				[
 					SNew(SVerticalBox)
 					+ SVerticalBox::Slot().AutoHeight().Padding(10, 8, 10, 2)
@@ -2963,10 +3057,9 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeSelectionDetails()
 							SNew(SButton)
 							.Text(LOCTEXT("FaceUp", "上"))
 							.ToolTipText(LOCTEXT("FaceUpTip", "朝画面上方，和 W 同一个方向"))
-							.ButtonColorAndOpacity_Lambda([this]
+							.ButtonColorAndOpacity_Lambda([this, SelectedYaw]
 							{
-								const FBoxLevelInstance* Inst = Editor ? Editor->GetSelectedInstance() : nullptr;
-								const bool bOn = Inst && BoxFacing::Normalize(Inst->YawSteps) == 0;
+								const bool bOn = SelectedYaw() == 0;
 								return FSlateColor(bOn ? FLinearColor(0.85f, 0.62f, 0.12f) : FLinearColor(0.22f, 0.22f, 0.22f));
 							})
 							.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
@@ -2981,10 +3074,9 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeSelectionDetails()
 							SNew(SButton)
 							.Text(LOCTEXT("FaceRight", "右"))
 							.ToolTipText(LOCTEXT("FaceRightTip", "朝画面右方，和 D 同一个方向"))
-							.ButtonColorAndOpacity_Lambda([this]
+							.ButtonColorAndOpacity_Lambda([this, SelectedYaw]
 							{
-								const FBoxLevelInstance* Inst = Editor ? Editor->GetSelectedInstance() : nullptr;
-								const bool bOn = Inst && BoxFacing::Normalize(Inst->YawSteps) == 1;
+								const bool bOn = SelectedYaw() == 1;
 								return FSlateColor(bOn ? FLinearColor(0.85f, 0.62f, 0.12f) : FLinearColor(0.22f, 0.22f, 0.22f));
 							})
 							.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
@@ -2999,10 +3091,9 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeSelectionDetails()
 							SNew(SButton)
 							.Text(LOCTEXT("FaceDown", "下"))
 							.ToolTipText(LOCTEXT("FaceDownTip", "朝画面下方，和 S 同一个方向"))
-							.ButtonColorAndOpacity_Lambda([this]
+							.ButtonColorAndOpacity_Lambda([this, SelectedYaw]
 							{
-								const FBoxLevelInstance* Inst = Editor ? Editor->GetSelectedInstance() : nullptr;
-								const bool bOn = Inst && BoxFacing::Normalize(Inst->YawSteps) == 2;
+								const bool bOn = SelectedYaw() == 2;
 								return FSlateColor(bOn ? FLinearColor(0.85f, 0.62f, 0.12f) : FLinearColor(0.22f, 0.22f, 0.22f));
 							})
 							.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
@@ -3017,10 +3108,9 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeSelectionDetails()
 							SNew(SButton)
 							.Text(LOCTEXT("FaceLeft", "左"))
 							.ToolTipText(LOCTEXT("FaceLeftTip", "朝画面左方，和 A 同一个方向"))
-							.ButtonColorAndOpacity_Lambda([this]
+							.ButtonColorAndOpacity_Lambda([this, SelectedYaw]
 							{
-								const FBoxLevelInstance* Inst = Editor ? Editor->GetSelectedInstance() : nullptr;
-								const bool bOn = Inst && BoxFacing::Normalize(Inst->YawSteps) == 3;
+								const bool bOn = SelectedYaw() == 3;
 								return FSlateColor(bOn ? FLinearColor(0.85f, 0.62f, 0.12f) : FLinearColor(0.22f, 0.22f, 0.22f));
 							})
 							.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
@@ -3302,45 +3392,56 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeIssueList()
 
 TSharedRef<SWidget> SBoxLevelEditor::MakeIssueBar()
 {
-	return SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 2)
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight()
 		[
-			SNew(STextBlock)
-			.ColorAndOpacity(FSlateColor(FLinearColor(0.56f, 0.56f, 0.56f)))
-			.Text_Lambda([this]
-			{
-				const int32 Count = Editor ? Editor->GetVisibleAssets().Num() : 0;
-				return FText::FromString(FString::Printf(TEXT("%d 项"), Count));
-			})
-		]
-		+ SHorizontalBox::Slot().FillWidth(1.f).Padding(8, 2)
-		[
-			SNew(SVerticalBox)
-			+ SVerticalBox::Slot().AutoHeight()
+			SNew(SBorder).BorderImage(FAppStyle::GetBrush("DetailsView.CategoryTop"))
 			[
-				SNew(SBox).MaxDesiredHeight(96.f)
-				[
-					SNew(SScrollBox)
-					+ SScrollBox::Slot()
-					[
-						SAssignNew(IssueList, SBox)
-					]
-				]
+				SNew(STextBlock).Margin(FMargin(8, 4)).Text(LOCTEXT("Issues", "报错"))
 			]
-			+ SVerticalBox::Slot().AutoHeight()
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(8, 2)
 			[
 				SNew(STextBlock)
-				.AutoWrapText(true)
-				.ColorAndOpacity_Lambda([this]
-				{
-					return Editor && Editor->HasErrors()
-						? FSlateColor(FLinearColor(0.90f, 0.45f, 0.40f))
-						: FSlateColor(FLinearColor(0.55f, 0.75f, 0.50f));
-				})
+				.ColorAndOpacity(FSlateColor(FLinearColor(0.56f, 0.56f, 0.56f)))
 				.Text_Lambda([this]
 				{
-					return Editor ? FText::FromString(Editor->GetStatus()) : FText::GetEmpty();
+					const int32 Count = Editor ? Editor->GetVisibleAssets().Num() : 0;
+					return FText::FromString(FString::Printf(TEXT("%d 项"), Count));
 				})
+			]
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(8, 2)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SBox).MaxDesiredHeight(96.f)
+					[
+						SNew(SScrollBox)
+						+ SScrollBox::Slot()
+						[
+							SAssignNew(IssueList, SBox)
+						]
+					]
+				]
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(STextBlock)
+					.AutoWrapText(true)
+					.ColorAndOpacity_Lambda([this]
+					{
+						return Editor && Editor->HasErrors()
+							? FSlateColor(FLinearColor(0.90f, 0.45f, 0.40f))
+							: FSlateColor(FLinearColor(0.55f, 0.75f, 0.50f));
+					})
+					.Text_Lambda([this]
+					{
+						return Editor ? FText::FromString(Editor->GetStatus()) : FText::GetEmpty();
+					})
+				]
 			]
 		];
 }

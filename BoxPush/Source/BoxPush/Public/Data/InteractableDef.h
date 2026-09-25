@@ -39,16 +39,16 @@ public:
 	UPROPERTY(EditAnywhere, Instanced, BlueprintReadOnly, Category = "Logic")
 	TArray<TObjectPtr<UInteractableLogicComp>> LogicComps;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "State")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "State", meta = (DisplayName = "状态"))
 	TArray<FInteractableStateDef> States;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "State")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "State", meta = (DisplayName = "转移"))
 	TArray<FInteractableTransitionDef> Transitions;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual", meta = (DisplayName = "状态表现"))
+	UPROPERTY(meta = (DeprecatedProperty))
 	TArray<FStateVisual> StateVisuals;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual", meta = (DisplayName = "转移表现"))
+	UPROPERTY(meta = (DeprecatedProperty))
 	TArray<FTransitionVisual> TransitionVisuals;
 
 	UFUNCTION()
@@ -59,11 +59,6 @@ public:
 
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 	virtual void PostLoad() override;
-
-	UFUNCTION(BlueprintCallable, Category = "BoxPush|Interactable")
-	void ApplyOfficialDefaults(FName InDefinitionId);
-
-	bool SeedOfficialOverrideFlags();
 
 	UFUNCTION(BlueprintPure, Category = "BoxPush|Interactable")
 	FName GetDefaultState() const;

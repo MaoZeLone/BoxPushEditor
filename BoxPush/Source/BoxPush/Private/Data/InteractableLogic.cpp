@@ -8,6 +8,8 @@
 
 UGoalLogic::UGoalLogic()
 {
+	OccupiedEvent = TEXT("Pressed");
+	ClearedEvent = TEXT("Released");
 }
 
 void UGoalLogic::PostLoad()
@@ -17,6 +19,8 @@ void UGoalLogic::PostLoad()
 
 UPedalLogic::UPedalLogic()
 {
+	OccupiedEvent = TEXT("Pressed");
+	ClearedEvent = TEXT("Released");
 }
 
 void UPedalLogic::PostLoad()

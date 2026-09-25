@@ -52,7 +52,6 @@ private:
 	void OnAbilityInputPressed(FGameplayTag InputTag);
 	void OnAbilityInputReleased(FGameplayTag InputTag);
 	void PerformGrantedAbility(FGameplayTag AbilityTag);
-	void OnRedoFallback();
 
 	ABoxGameMode* FindGameMode() const;
 	void PollMoveKeys();

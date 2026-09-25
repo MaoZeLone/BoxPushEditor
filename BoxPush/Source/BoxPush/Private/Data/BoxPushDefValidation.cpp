@@ -86,22 +86,22 @@ void BoxPushDefValidation::ValidateTransitions(
 		if (!Row.FromState.IsNone() && !KnownStates.Contains(Row.FromState))
 		{
 			AddIssue(OutIssues, true, FString::Printf(
-				TEXT("Transition[%d] FromState %s does not exist"),
+				TEXT("转移[%d] FromState %s 不存在"),
 				Index, *Row.FromState.ToString()));
 		}
 		if (Row.ToState.IsNone())
 		{
-			AddIssue(OutIssues, true, FString::Printf(TEXT("Transition[%d] is missing ToState"), Index));
+			AddIssue(OutIssues, true, FString::Printf(TEXT("转移[%d] 缺少 ToState"), Index));
 		}
 		else if (!KnownStates.Contains(Row.ToState))
 		{
 			AddIssue(OutIssues, true, FString::Printf(
-				TEXT("Transition[%d] ToState %s does not exist"),
+				TEXT("转移[%d] ToState %s 不存在"),
 				Index, *Row.ToState.ToString()));
 		}
 		if (Row.Condition == EBoxTransitionCondition::OnEvent && Row.EventId.IsNone())
 		{
-			AddIssue(OutIssues, true, FString::Printf(TEXT("Transition[%d] is missing EventId"), Index));
+			AddIssue(OutIssues, true, FString::Printf(TEXT("转移[%d] 缺少 EventId"), Index));
 		}
 
 		const FString Key = FString::Printf(
@@ -112,8 +112,7 @@ void BoxPushDefValidation::ValidateTransitions(
 		if (SeenKeys.Contains(Key))
 		{
 			AddIssue(OutIssues, true, FString::Printf(
-				TEXT("Transition[%d] duplicates an earlier from-state and condition"),
-				Index));
+				TEXT("转移[%d] 和前面的来源、条件重复"), Index));
 		}
 		SeenKeys.Add(Key);
 	}

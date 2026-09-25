@@ -103,11 +103,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
 	bool bAllowRequiredType = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "压上事件", InstanceOverride = "bAllowOccupiedEvent"))
+	FName OccupiedEvent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
+	bool bAllowOccupiedEvent = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "离开事件", InstanceOverride = "bAllowClearedEvent"))
+	FName ClearedEvent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
+	bool bAllowClearedEvent = false;
+
 	virtual bool CountsTowardWin() const override { return true; }
 	virtual bool IsWinSatisfied(const UBoxBoard& Board, const FBoxRuntimeInstance& Self) const override;
 };
 
-/** 被压下切 Pressed。EventId 留给以后开门，现在只切状态。 */
+/** 被压下时发压上事件，离开时发离开事件。EventId 留给以后开门。 */
 UCLASS(BlueprintType, EditInlineNew, DefaultToInstanced, CollapseCategories, meta = (DisplayName = "Pedal"))
 class BOXPUSH_API UPedalLogic : public UInteractableLogicComp
 {
@@ -128,6 +140,18 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
 	bool bAllowEventId = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "压上事件", InstanceOverride = "bAllowOccupiedEvent"))
+	FName OccupiedEvent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
+	bool bAllowOccupiedEvent = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "离开事件", InstanceOverride = "bAllowClearedEvent"))
+	FName ClearedEvent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
+	bool bAllowClearedEvent = false;
 };
 
 /** 格子传感器。有它，Begin Overlap / End Overlap 才生效。不挡人、不挡推，也不算胜利。 */

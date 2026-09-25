@@ -9,11 +9,6 @@
 #include "Game/BoxSaveGame.h"
 #include "Kismet/GameplayStatics.h"
 
-namespace
-{
-	const FString SaveSlot(TEXT("BoxPushSave"));
-}
-
 void UBoxGameInstance::Init()
 {
 	Super::Init();
@@ -54,9 +49,10 @@ UDataTable* UBoxGameInstance::GetCatalog() const
 
 void UBoxGameInstance::LoadOrCreateSave()
 {
-	if (UGameplayStatics::DoesSaveGameExist(SaveSlot, 0))
+	const FString Slot = BoxAssetPaths::SaveSlot();
+	if (!Slot.IsEmpty() && UGameplayStatics::DoesSaveGameExist(Slot, 0))
 	{
-		SaveData = Cast<UBoxSaveGame>(UGameplayStatics::LoadGameFromSlot(SaveSlot, 0));
+		SaveData = Cast<UBoxSaveGame>(UGameplayStatics::LoadGameFromSlot(Slot, 0));
 	}
 	if (!SaveData)
 	{
@@ -66,9 +62,10 @@ void UBoxGameInstance::LoadOrCreateSave()
 
 void UBoxGameInstance::WriteSave() const
 {
-	if (SaveData)
+	const FString Slot = BoxAssetPaths::SaveSlot();
+	if (SaveData && !Slot.IsEmpty())
 	{
-		UGameplayStatics::SaveGameToSlot(SaveData, SaveSlot, 0);
+		UGameplayStatics::SaveGameToSlot(SaveData, Slot, 0);
 	}
 }
 
@@ -219,13 +216,15 @@ TArray<FBoxSelectEntry> UBoxGameInstance::GetSelectEntries() const
 		Entry.bUnlocked = IsLevelUnlocked(Row.LevelId);
 		const FBoxLevelRecord Record = GetLevelRecord(Row.LevelId);
 		Entry.bCleared = Record.bCleared;
-		if (const ULevelData* Level = Row.LevelAsset.Get())
+		if (const ULevelData* Level = Row.LevelAsset.LoadSynchronous())
 		{
-			Entry.DisplayName = Level->DisplayName;
+			Entry.DisplayName = Level->DisplayName.IsEmpty()
+				? FText::FromString(TEXT("未命名关卡"))
+				: Level->DisplayName;
 		}
 		else
 		{
-			Entry.DisplayName = FText::FromName(Row.LevelId);
+			Entry.DisplayName = FText::FromString(TEXT("未命名关卡"));
 		}
 		Entries.Add(Entry);
 	}

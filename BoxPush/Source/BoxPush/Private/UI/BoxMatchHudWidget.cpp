@@ -87,6 +87,16 @@ void UBoxMatchHudWidget::BuildLayout()
 
 	FillCanvas(Root, TopBar, FAnchors(0.f, 0.f, 1.f, 0.f), FMargin(24.f, 16.f, 24.f, 72.f), 1);
 
+	UBorder* HintBox = BoxUi::MakePanel(WidgetTree, TEXT("HintPanel"), FMargin(12.f, 8.f));
+	UTextBlock* HintText = BoxUi::MakeText(WidgetTree, TEXT("HintText"),
+		FText::FromString(TEXT("WASD / 方向键 移动\nZ 撤销    Y 重做\nR 重开    Esc 暂停")),
+		16, BoxUi::Muted, false);
+	HintText->SetJustification(ETextJustify::Left);
+	HintText->SetAutoWrapText(true);
+	HintBox->AddChild(HintText);
+	HintPanel = HintBox;
+	FillCanvas(Root, HintBox, FAnchors(0.f, 0.f, 0.f, 0.f), FMargin(24.f, 92.f, 260.f, 168.f), 2);
+
 	auto MakeCenteredOverlay = [this](FName Name, UWidget* Panel) -> UOverlay*
 	{
 		UOverlay* Overlay = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), Name);
@@ -172,6 +182,7 @@ void UBoxMatchHudWidget::Refresh()
 	const bool bWon = Phase == EBoxFlowPhase::Won;
 	SetOverlayVisible(PauseOverlay, bPaused);
 	SetOverlayVisible(WinOverlay, bWon);
+	SetOverlayVisible(HintPanel, !bPaused && !bWon);
 	if (PauseButton)
 	{
 		PauseButton->SetVisibility(bWon ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);

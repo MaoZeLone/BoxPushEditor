@@ -57,6 +57,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "内容", meta = (DisplayName = "交互物目录"))
 	FString InteractableDirectory;
 
+	UPROPERTY(Config, EditAnywhere, Category = "内容", meta = (DisplayName = "存档槽"))
+	FString SaveSlot;
+
 	UPROPERTY(Config, EditAnywhere, Category = "内容", meta = (DisplayName = "角色表现"))
 	FSoftObjectPath PlayerSprite;
 

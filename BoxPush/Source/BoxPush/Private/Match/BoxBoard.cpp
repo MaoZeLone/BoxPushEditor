@@ -32,6 +32,7 @@ bool UBoxBoard::InitFromLevel(const ULevelData* InLevel)
 	}
 
 	PlayerCell = InLevel->PlayerSpawn;
+	PlayerYawSteps = InLevel->PlayerYawSteps;
 	for (const FBoxLevelInstance& Source : InLevel->Instances)
 	{
 		const UInteractableDef* Def = Source.LoadDefinition();

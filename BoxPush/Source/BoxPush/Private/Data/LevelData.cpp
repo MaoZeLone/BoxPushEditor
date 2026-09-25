@@ -4,6 +4,7 @@
 #include "Data/BoxInstanceParams.h"
 #include "Data/InteractableDef.h"
 #include "Data/InteractableLogic.h"
+#include "Match/BoxBoard.h"
 
 FPrimaryAssetId ULevelData::GetPrimaryAssetId() const
 {
@@ -232,7 +233,7 @@ void ULevelData::Validate(TArray<FLevelValidationIssue>& OutIssues) const
 
 	if (LevelId.IsNone())
 	{
-		AddError(TEXT("LevelId 为空"));
+		AddError(TEXT("关卡资产名为空"));
 	}
 	if (Width < MinSize || Width > MaxSize || Height < MinSize || Height > MaxSize)
 	{
@@ -309,7 +310,6 @@ void ULevelData::Validate(TArray<FLevelValidationIssue>& OutIssues) const
 
 	TSet<FName> FiredNames;
 	TSet<FName> ListenNames;
-	const TSet<FName> LocalSimEvents = { TEXT("Pressed"), TEXT("Released") };
 	for (const FBoxLevelInstance& Inst : Instances)
 	{
 		const UInteractableDef* Def = Inst.LoadDefinition();
@@ -373,17 +373,10 @@ void ULevelData::Validate(TArray<FLevelValidationIssue>& OutIssues) const
 			AddWarn(*FString::Printf(TEXT("事件 %s 有人发，没有转移在听"), *Name.ToString()));
 		}
 	}
-	for (const FName& Name : ListenNames)
-	{
-		if (!FiredNames.Contains(Name) && !LocalSimEvents.Contains(Name))
-		{
-			AddWarn(*FString::Printf(TEXT("事件 %s 有转移在听，本关没有状态发出"), *Name.ToString()));
-		}
-	}
 
-	if (PushableCount != GoalCount || PushableCount < 1)
+	if (GoalCount < 1 || PushableCount < GoalCount)
 	{
-		AddError(*FString::Printf(TEXT("Pushable %d 个，Goal %d 个，胜利条件无法达成"), PushableCount, GoalCount), PushableCells);
+		AddError(*FString::Printf(TEXT("箱子 %d 个，目标 %d 个，箱子不能比目标少"), PushableCount, GoalCount), PushableCells);
 	}
 	for (const TPair<FIntPoint, TArray<FName>>& Pair : BlockingAt)
 	{

@@ -79,6 +79,7 @@ void ABoxMatchWorld::BindPlayer(ABoxPlayerCharacter* InPlayer)
 	if (bNewPlayer && Player && Board)
 	{
 		SnapPlayer(Board->GetPlayerCell());
+		FaceSpawn();
 	}
 	if (bNewPlayer)
 	{
@@ -138,7 +139,8 @@ void ABoxMatchWorld::ApplySpriteCamera()
 FTransform ABoxMatchWorld::GetPlayerSpawnTransform() const
 {
 	const FIntPoint Cell = Board ? Board->GetPlayerCell() : FIntPoint::ZeroValue;
-	return FTransform(BoxGrid::CellToWorld(Cell, 90.f));
+	const int32 Yaw = Board ? Board->GetPlayerYawSteps() : 0;
+	return FTransform(BoxFacing::ToRotator(Yaw), BoxGrid::CellToWorld(Cell, 90.f));
 }
 
 UStaticMeshComponent* ABoxMatchWorld::SpawnTileSprite(const UVisualSpriteComp* Comp, FIntPoint Cell)
@@ -219,6 +221,7 @@ void ABoxMatchWorld::RebuildPresentation()
 	if (Player)
 	{
 		SnapPlayer(Board->GetPlayerCell());
+		FaceSpawn();
 	}
 }
 
@@ -228,6 +231,16 @@ void ABoxMatchWorld::SnapPlayer(FIntPoint Cell)
 	{
 		Player->SetActorLocation(BoxGrid::CellToWorld(Cell, 90.f));
 	}
+}
+
+void ABoxMatchWorld::FaceSpawn()
+{
+	if (!Player || !Board)
+	{
+		return;
+	}
+	Player->SetActorRotation(BoxFacing::ToRotator(Board->GetPlayerYawSteps()));
+	Player->SyncLocomotion();
 }
 
 void ABoxMatchWorld::FacePlayer(FIntPoint From, FIntPoint To)
@@ -559,6 +572,7 @@ bool ABoxMatchWorld::RequestRestart(ABoxPlayerCharacter* InPlayer)
 	ClearMoveQueue();
 	BindPlayer(Target);
 	SnapPlayer(Board->GetPlayerCell());
+	FaceSpawn();
 	ApplyDeltas(Result.Moves, true);
 	for (const FBoxRuntimeInstance& Inst : Board->GetInstances())
 	{

@@ -358,7 +358,7 @@ void UBoxGridSim::RefreshOccupancyStates()
 		if (const UGoalLogic* Goal = Inst.Def->FindLogic<UGoalLogic>())
 		{
 			bOccupied = Goal->IsWinSatisfied(*Board, Inst);
-			ApplyEvent(Inst, bOccupied ? TEXT("Pressed") : TEXT("Released"), nullptr);
+			ApplyEvent(Inst, bOccupied ? BoxInstanceParams::OccupiedEvent(Inst) : BoxInstanceParams::ClearedEvent(Inst), nullptr);
 		}
 
 		if (Inst.Def->FindLogic<UPedalLogic>())
@@ -382,7 +382,7 @@ void UBoxGridSim::RefreshOccupancyStates()
 					break;
 				}
 			}
-			ApplyEvent(Inst, bOccupied ? TEXT("Pressed") : TEXT("Released"), nullptr);
+			ApplyEvent(Inst, bOccupied ? BoxInstanceParams::OccupiedEvent(Inst) : BoxInstanceParams::ClearedEvent(Inst), nullptr);
 		}
 
 		if (Inst.Def->FindLogic<UTriggerLogic>())

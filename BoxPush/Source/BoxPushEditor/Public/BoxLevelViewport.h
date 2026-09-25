@@ -34,10 +34,12 @@ public:
 	virtual void Draw(const FSceneView* View, FPrimitiveDrawInterface* PDI) override;
 	virtual void ProcessClick(FSceneView& View, HHitProxy* HitProxy, FKey Key, EInputEvent Event, uint32 HitX, uint32 HitY) override;
 	virtual bool InputKey(const FInputKeyEventArgs& EventArgs) override;
+	virtual void MouseMove(FViewport* InViewport, int32 X, int32 Y) override;
 	virtual void CapturedMouseMove(FViewport* InViewport, int32 InMouseX, int32 InMouseY) override;
 	virtual EMouseCaptureMode GetMouseCaptureMode() const override;
 	virtual bool HideCursorDuringCapture() const override;
 	virtual bool RequiresUncapturedAxisInput() const override;
+	virtual bool ShouldOrbitCamera() const override;
 	virtual void TrackingStarted(const FInputEventState& InInputState, bool bIsDraggingWidget, bool bNudge) override;
 	virtual void TrackingStopped() override;
 	virtual bool InputWidgetDelta(FViewport* InViewport, EAxisList::Type CurrentAxis, FVector& Drag, FRotator& Rot, FVector& Scale) override;
@@ -54,7 +56,11 @@ public:
 	bool DropBrush(int32 MouseX, int32 MouseY, FName BrushId);
 
 private:
+	bool MouseToBoard(int32 MouseX, int32 MouseY, FVector& OutHit);
 	bool MouseToCell(int32 MouseX, int32 MouseY, FIntPoint& OutCell);
+	void BeginBoardPan(int32 MouseX, int32 MouseY);
+	void UpdateBoardPan(int32 MouseX, int32 MouseY);
+	void EndBoardPan();
 	void PaintAtCursor(int32 MouseX, int32 MouseY, bool bErase);
 	void SelectAtCursor(int32 MouseX, int32 MouseY, bool bClear);
 	void BeginSelectPress(int32 MouseX, int32 MouseY, bool bClear);
@@ -83,6 +89,8 @@ private:
 	int32 ObjectPressX = 0;
 	int32 ObjectPressY = 0;
 	FIntPoint ObjectPressCell = FIntPoint(MAX_int32, MAX_int32);
+	bool bBoardPanning = false;
+	FVector PanGrabWorld = FVector::ZeroVector;
 	TOptional<FIntPoint> DropHover;
 };
 

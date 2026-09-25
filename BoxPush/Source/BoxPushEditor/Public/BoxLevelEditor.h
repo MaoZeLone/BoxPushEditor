@@ -186,6 +186,7 @@ private:
 		TArray<ETerrainCell> Cells;
 		TArray<FBoxLevelInstance> Instances;
 		FIntPoint PlayerSpawn = FIntPoint::ZeroValue;
+		int32 PlayerYawSteps = 0;
 		int32 Width = 0;
 		int32 Height = 0;
 		FText DisplayName;
@@ -242,8 +243,8 @@ private:
 
 	FName BrushId = TEXT("Floor");
 	FGameplayTag FolderTag;
-	EBoxEditorMode Mode = EBoxEditorMode::Place;
-	bool bInspectLevel = false;
+	EBoxEditorMode Mode = EBoxEditorMode::Configure;
+	bool bInspectLevel = true;
 	EBoxSceneSelection SelectionKind = EBoxSceneSelection::None;
 	FName SelectedInstanceId;
 	FString LevelFilter;

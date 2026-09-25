@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/Texture2D.h"
 #include "InteractableState.generated.h"
 
 UENUM()
@@ -54,13 +55,68 @@ struct BOXPUSH_API FInteractableStateActionDef
 	bool bAllowOverride = false;
 };
 
+UENUM()
+enum class EVisualTaskType : uint8
+{
+	SetVisible UMETA(DisplayName = "可视度"),
+	SetSprite UMETA(DisplayName = "贴图"),
+	SetBlocking UMETA(DisplayName = "挡路"),
+};
+
+/** 一条表现任务。指向 SpriteComps 里的 CompId。挡路不指向贴图。 */
+USTRUCT(BlueprintType)
+struct BOXPUSH_API FVisualTask
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task")
+	EVisualTaskType Type = EVisualTaskType::SetVisible;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (GetOptions = "GetVisualCompOptions", EditCondition = "Type != EVisualTaskType::SetBlocking", EditConditionHides))
+	FName CompId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetBlocking", EditConditionHides, DisplayName = "挡人"))
+	bool bBlocksPlayer = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetBlocking", EditConditionHides, DisplayName = "挡推"))
+	bool bBlocksPush = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetVisible", EditConditionHides, DisplayName = "可见"))
+	bool bVisible = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetSprite", EditConditionHides, DisplayName = "贴图"))
+	TSoftObjectPtr<UTexture2D> Texture;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetSprite", EditConditionHides, ClampMin = "0"))
+	int32 SourceX = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetSprite", EditConditionHides, ClampMin = "0"))
+	int32 SourceY = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetSprite", EditConditionHides, ClampMin = "0"))
+	int32 SourceW = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Task",
+		meta = (EditCondition = "Type == EVisualTaskType::SetSprite", EditConditionHides, ClampMin = "0"))
+	int32 SourceH = 0;
+};
+
 /** One transition: from-state + condition -> to-state. */
 USTRUCT(BlueprintType)
 struct BOXPUSH_API FInteractableTransitionDef
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition", meta = (ToolTip = "Empty = any current state"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition",
+		meta = (GetOptions = "GetVisualStateOptions", ToolTip = "空 = 任意当前状态"))
 	FName FromState;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition")
@@ -74,8 +130,11 @@ struct BOXPUSH_API FInteractableTransitionDef
 		meta = (EditCondition = "Condition == EBoxTransitionCondition::OnEvent", EditConditionHides, DisplayName = "可实例重载"))
 	bool bAllowOverride = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition", meta = (GetOptions = "GetVisualStateOptions"))
 	FName ToState;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition", meta = (DisplayName = "表现"))
+	TArray<FVisualTask> Tasks;
 };
 
 USTRUCT(BlueprintType)
@@ -100,6 +159,13 @@ struct BOXPUSH_API FInteractableStateDef
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "State")
 	TArray<FInteractableStateActionDef> OnExit;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "State", meta = (DisplayName = "表现"))
+	TArray<FVisualTask> Tasks;
+
+	/** 误挂在状态下的转移。加载时抬回定义上的转移表。 */
+	UPROPERTY(meta = (DeprecatedProperty))
+	TArray<FInteractableTransitionDef> Transitions;
 
 	UPROPERTY(meta = (DeprecatedProperty))
 	TArray<FName> EnterEvents;

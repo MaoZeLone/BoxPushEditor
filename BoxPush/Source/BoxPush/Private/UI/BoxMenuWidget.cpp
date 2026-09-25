@@ -75,7 +75,7 @@ void UBoxSelectCardWidget::Setup(const FBoxSelectEntry& Entry)
 	bUnlocked = Entry.bUnlocked;
 	if (NameText)
 	{
-		NameText->SetText(Entry.DisplayName.IsEmpty() ? FText::FromName(Entry.LevelId) : Entry.DisplayName);
+		NameText->SetText(Entry.DisplayName.IsEmpty() ? FText::FromString(TEXT("未命名关卡")) : Entry.DisplayName);
 		NameText->SetColorAndOpacity(FSlateColor(bUnlocked ? BoxUi::Ink : BoxUi::Muted));
 	}
 	if (StatusText)
