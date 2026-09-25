@@ -1,0 +1,491 @@
+//  Copyright GenericMessagePlugin, Inc. All Rights Reserved.
+
+#pragma once
+#if defined(JSENV_API)
+#include "GMPCore.h"
+#include "Misc/ScopeExit.h"
+#include "V8Utils.h"
+#include "v8.h"
+
+// export FPropertyTranslator::Create JSENV_API
+#include "../Private/PropertyTranslator.h"
+// export RegisterAddon JSENV_API
+#include "JSClassRegister.h"
+
+#if !defined(PUERTS_NAMESPACE)
+#define PUERTS_NAMESPACE puerts
+#endif
+
+GMP_EXTERNAL_SIGSOURCE(v8::Isolate)
+namespace PuertsSupport
+{
+// Runs user-specified code when the given javascript object is garbage collected
+template<class Lambda>
+void BindWeakCallback(v8::Isolate* InIsolate, const v8::Local<v8::Object>& JsObj, Lambda&& Callback)
+{
+	struct SetWeakCallbackData
+	{
+		SetWeakCallbackData(Lambda&& InCallback, v8::Isolate* Isolate, const v8::Local<v8::Object>& InJsObj)
+			: Callback(std::move(InCallback))
+		{
+			this->GlobalRef.Reset(Isolate, InJsObj);
+		}
+		// function to call for cleanup
+		Lambda Callback;
+		v8::Global<v8::Object> GlobalRef;
+	};
+
+	auto CbData = new SetWeakCallbackData(std::move(Callback), InIsolate, JsObj);
+
+	// set the callback on the javascript object to be called when it's garbage collected
+	CbData->GlobalRef.template SetWeak<SetWeakCallbackData>(
+		CbData,
+		[](const v8::WeakCallbackInfo<SetWeakCallbackData>& data) {
+			auto* Data = data.GetParameter();
+			Data->Callback();         // run user-specified code
+			Data->GlobalRef.Reset();  // free the V8 reference
+			delete Data;              // delete the heap variable so it isn't leaked
+		},
+		v8::WeakCallbackType::kParameter);
+}
+using namespace PUERTS_NAMESPACE;
+
+#if GMP_TRACE_SCRIPT_SRC && WITH_EDITOR
+// Resolve the first JS frame ("scriptName:line") of the current call site, for message-source tracing. Mirrors UnLua's
+// GMP_ResolveScriptCallerLoc. Must be called inside an active HandleScope. Empty string if no frame.
+inline FString GMP_Puerts_ResolveCallerLoc(v8::Isolate* Isolate)
+{
+	auto ST = v8::StackTrace::CurrentStackTrace(Isolate, 1, v8::StackTrace::kScriptNameOrSourceURL);
+	if (ST.IsEmpty() || ST->GetFrameCount() <= 0)
+		return FString();
+	auto Frame = ST->GetFrame(Isolate, 0);
+	v8::String::Utf8Value SN(Isolate, Frame->GetScriptNameOrSourceURL());
+	const TCHAR* Name = (*SN && **SN) ? UTF8_TO_TCHAR(*SN) : TEXT("<unknown>");
+	return FString::Printf(TEXT("%s:%d"), Name, Frame->GetLineNumber());
+}
+#endif
+
+// Keeps the js callback and its context alive for the lifetime of the listen.
+struct FGMPPuertsCallbackHolder
+{
+	v8::Global<v8::Context> ContextHandle;
+	v8::Global<v8::Function> FuncHandle;
+	FGMPPuertsCallbackHolder(v8::Isolate* InIsolate, v8::Local<v8::Function>& InFunc)
+		: ContextHandle(InIsolate, InIsolate->GetCurrentContext())
+		, FuncHandle(InIsolate, InFunc)
+	{
+	}
+	~FGMPPuertsCallbackHolder()
+	{
+		ContextHandle.Reset();
+		FuncHandle.Reset();
+	}
+};
+
+// Turns the paddrs into js values and calls into the script; shared by the plain listen and the row listen.
+inline void GMP_Puerts_InvokeListenCallback(const FGMPTypedAddr* Paddrs, int32 MsgNumArgs, FName KeyName, const FName* InRawTypeNames, const TArray<FName>* InMetaTypes, const FGMPPuertsCallbackHolder& Holder, v8::Isolate* Isolate, bool bSkipSigCheck = false)
+{
+			v8::Isolate::Scope Isolatescope(Isolate);
+			v8::HandleScope HandleScope(Isolate);
+			auto CbContext = Holder.ContextHandle.Get(Isolate);
+			v8::Context::Scope ContextScope(CbContext);
+			auto CbFunc = Holder.FuncHandle.Get(Isolate);
+
+#if WITH_EDITOR
+			if (!ensure(!CbFunc.IsEmpty()))
+				return;
+#endif
+
+			auto GetTypeName = [&](int32 In) -> FName {
+#if GMP_WITH_TYPENAME
+				(void)InRawTypeNames;
+				(void)InMetaTypes;
+				return Paddrs[In].TypeName;
+#else
+				if (InMetaTypes && InMetaTypes->IsValidIndex(In))
+					return (*InMetaTypes)[In];
+				return InRawTypeNames ? InRawTypeNames[In] : NAME_None;
+#endif
+			};
+
+			const int32 MsgArgCount = MsgNumArgs;
+			bool bSucc = true;
+			TArray<std::unique_ptr<FPropertyTranslator>, TInlineAllocator<8>> Incs;
+			for (auto Idx = 0; Idx < MsgArgCount; ++Idx)
+			{
+				FProperty* Prop = nullptr;
+				if (GMPReflection::PropertyFromString(GetTypeName(Idx).ToString(), Prop) && Prop)
+				{
+					auto Inc = FPropertyTranslator::Create(Prop);
+					if (Inc)
+					{
+						Incs.Add(std::move(Inc));
+						continue;
+					}
+				}
+
+				GMP_ERROR(TEXT("cannot get property from [%s]"), *GetTypeName(Idx).ToString());
+				bSucc = false;
+				break;
+			}
+
+			if (bSucc)
+			{
+				v8::Local<v8::Value>* Args = static_cast<v8::Local<v8::Value>*>(FMemory_Alloca(sizeof(v8::Local<v8::Value>) * MsgArgCount));
+				FMemory::Memset(Args, 0, sizeof(v8::Local<v8::Value>) * MsgArgCount);
+				for (auto Idx = 0; Idx < MsgArgCount; ++Idx)
+				{
+					auto& Inc = Incs[Idx];
+					Args[Idx] = Inc->UEToJs(Isolate, CbContext, Paddrs[Idx].ToAddr(), true);
+				}
+
+#if GMP_WITH_DYNAMIC_CALL_CHECK
+				GMP::FArrayTypeNames ArgNames;
+				ArgNames.Reserve(MsgArgCount);
+				for (auto Idx = 0; Idx < MsgArgCount; ++Idx)
+					ArgNames.Add(GetTypeName(Idx));
+				const GMP::FArrayTypeNames* OldParams = nullptr;
+				GMP::FMessageHub::FTagTypeSetter SetMsgTagType(TEXT("Puerts"));
+				const bool bSigOk = bSkipSigCheck || GMP::FMessageHub::IsSignatureCompatible(false, KeyName, ArgNames, OldParams);
+#else
+				const bool bSigOk = true;
+#endif
+				if (ensure(bSigOk))
+				{
+					v8::TryCatch TryCatch(Isolate);
+					auto ReturnVal = CbFunc->Call(CbContext, CbContext->Global(), MsgArgCount, Args);
+					if (TryCatch.HasCaught())
+					{
+						GMP_WARNING(TEXT("Exception:%s"), *FV8Utils::TryCatchToString(Isolate, &TryCatch));
+						TryCatch.ReThrow();
+					}
+				}
+				else
+				{
+					GMP_WARNING(TEXT("SignatureMismatch On Puerts Listen %s"), *KeyName.ToString());
+				}
+			}
+}
+
+// function ListenRowMessage(watchedobj, msgkey, weakobj, index, function(row, item) [,times])
+// index: >=0 that row, <0 row ~index with removal notices, GMP::AllRows every row; a removed row arrives negative.
+inline void v8_ListenRowMessage(const v8::FunctionCallbackInfo<v8::Value>& Info)
+{
+	uint64 RetKey = 0;
+	do
+	{
+		enum GMP_Row_Index : int32
+		{
+			WatchedObj = 0,
+			MessageKey,
+			WeakObject,
+			RowIndex,
+			Function,
+			Times,
+		};
+
+		auto Isolate = Info.GetIsolate();
+		v8::Isolate::Scope IsolateScope(Isolate);
+		v8::HandleScope HandleScope(Isolate);
+		v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
+		v8::Context::Scope ContextScope(Context);
+
+		if (Info.Length() < GMP_Row_Index::Times)
+			break;
+		auto FuncArg = Info[GMP_Row_Index::Function];
+		if (!ensure(FuncArg->IsFunction()))
+			break;
+
+		const FName MsgKey = *v8::String::Utf8Value(Isolate, Info[GMP_Row_Index::MessageKey]);
+		if (!ensure(!MsgKey.IsNone()))
+			break;
+		const int32 Index = Info[GMP_Row_Index::RowIndex]->Int32Value(Context).ToChecked();
+		const int32 LeftTimes = Info.Length() > GMP_Row_Index::Times ? Info[GMP_Row_Index::Times]->Int32Value(Context).ToChecked() : -1;
+
+		UObject* WatchedObject = FV8Utils::GetUObject(Context, Info[GMP_Row_Index::WatchedObj]);
+		UObject* WeakObj = FV8Utils::GetUObject(Context, Info[GMP_Row_Index::WeakObject]);
+
+		auto LocalFunc = FuncArg.As<v8::Function>();
+		auto Holder = MakeShared<FGMPPuertsCallbackHolder>(Isolate, LocalFunc);
+		const auto SigSrc = WatchedObject ? FGMPSigSource(WatchedObject) : FGMPSigSource(Isolate);
+		RetKey = GMP::GMPListenScriptRows(
+			SigSrc, MsgKey, WeakObj, Index,
+			[Isolate, Holder, MsgKey](const FGMPTypedAddr* Addrs, int32 Num, const UScriptStruct*) {
+				GMP_Puerts_InvokeListenCallback(Addrs, Num, MsgKey, nullptr, nullptr, *Holder, Isolate, /*bSkipSigCheck*/ true);
+			},
+			LeftTimes);
+	} while (false);
+	Info.GetReturnValue().Set(static_cast<double>(RetKey));
+}
+
+// function ListenObjectMessage(watchedobj, msgkey, weakobj, function [,times])
+// function ListenObjectMessage(watchedobj, msgkey, weakobj, globalfuncstr [,times])
+inline void v8_ListenObjectMessage(const v8::FunctionCallbackInfo<v8::Value>& Info)
+{
+	uint64 RetKey = 0;
+	do
+	{
+		enum GMP_Listen_Index : int32
+		{
+			WatchedObj = 0,
+			MessageKey,
+			WeakObject,
+			Function,
+			Times,
+		};
+
+		auto Isolate = Info.GetIsolate();
+		v8::Isolate::Scope IsolateScope(Isolate);
+		v8::HandleScope HandleScope(Isolate);
+		v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
+		v8::Context::Scope ContextScope(Context);
+
+		auto NumArgs = Info.Length();
+		if (NumArgs < 4)
+			break;
+
+		auto FuncArg = Info[GMP_Listen_Index::Function];
+		bool bIsGlobalFunc = false;
+		if (FuncArg->IsString())
+		{
+			FuncArg = Context->Global()->Get(Context, FuncArg).ToLocalChecked();
+			bIsGlobalFunc = true;
+		}
+		if (!ensure(FuncArg->IsFunction()))
+			break;
+
+		int32 LeftTimes = -1;
+		if (NumArgs == GMP_Listen_Index::Times)
+		{
+			LeftTimes = Info[GMP_Listen_Index::Times]->Int32Value(Context).ToChecked();
+		}
+
+		const FName MsgKey = *v8::String::Utf8Value(Isolate, Info[GMP_Listen_Index::MessageKey]);
+		if (!ensure(!MsgKey.IsNone()))
+			break;
+
+#if GMP_TRACE_SCRIPT_SRC && WITH_EDITOR
+		if (const FString Loc = GMP_Puerts_ResolveCallerLoc(Isolate); !Loc.IsEmpty())
+			GMP::TraceScriptMessageSource(MsgKey, Loc, /*bIsListen*/ true);
+#endif
+
+		UObject* WatchedObject = FV8Utils::GetUObject(Context, Info[GMP_Listen_Index::WatchedObj]);
+		UObject* WeakObj = FV8Utils::GetUObject(Context, Info[GMP_Listen_Index::WeakObject]);
+
+		auto LocalFunc = FuncArg.As<v8::Function>();
+		auto Holder = MakeShared<FGMPPuertsCallbackHolder>(Isolate, LocalFunc);
+		auto GMP_Puerts_ListenCallbackBody = [Isolate, Holder](const FGMPTypedAddr* Paddrs, int32 MsgNumArgs, FName KeyName, const FName* InRawTypeNames, const TArray<FName>* InMetaTypes) {
+			GMP_Puerts_InvokeListenCallback(Paddrs, MsgNumArgs, KeyName, InRawTypeNames, InMetaTypes, *Holder, Isolate);
+		};
+
+#if GMP_WITH_DIRECT_SIGNAL
+		RetKey = FGMPHelper::ScriptListenMessageRaw(
+			WatchedObject ? FGMPSigSource(WatchedObject) : FGMPSigSource(Isolate),
+			MsgKey,
+			WeakObj,
+			[Body{std::move(GMP_Puerts_ListenCallbackBody)}](const FGMPTypedAddr* paddrs, const GMP::FGMPExtra* extra) {
+				Body(paddrs, extra->Size, extra->Key, extra->TypeNames, nullptr);
+			},
+			LeftTimes);
+#else
+		RetKey = FGMPHelper::ScriptListenMessage(
+			WatchedObject ? FGMPSigSource(WatchedObject) : FGMPSigSource(Isolate),
+			MsgKey,
+			WeakObj,
+			[Body{std::move(GMP_Puerts_ListenCallbackBody)}, WeakObj](GMP::FMessageBody& MsgBody) {
+				const auto Addrs = MsgBody.GetParams();  // TArrayView by value (inline trailing block)
+				Body(Addrs.GetData(), Addrs.Num(), MsgBody.MessageKey(), nullptr, MsgBody.GetMessageTypes(WeakObj));
+			},
+			LeftTimes);
+#endif
+
+#define WITH_V8_WEAK_DETECTION 1
+#if WITH_V8_WEAK_DETECTION
+		if (!WeakObj)
+		{
+			auto JsObj = Info[GMP_Listen_Index::WeakObject];
+			if (JsObj->IsObject())
+				BindWeakCallback(Isolate, JsObj.As<v8::Object>(), [RetKey, MsgKey] { FGMPHelper::ScriptUnbindMessage(MsgKey, RetKey); });
+			else
+				BindWeakCallback(Isolate, LocalFunc, [RetKey, MsgKey] { FGMPHelper::ScriptUnbindMessage(MsgKey, RetKey); });
+		}
+#endif
+	} while (false);
+	Info.GetReturnValue().Set((double)RetKey);
+}
+
+// function UnbindObjectMessage(msgkey, ListenedObj)
+// function UnbindObjectMessage(msgkey, Key)
+inline void v8_UnbindObjectMessage(const v8::FunctionCallbackInfo<v8::Value>& Info)
+{
+	auto NumArgs = Info.Length();
+	if (NumArgs >= 2)
+	{
+		auto Isolate = Info.GetIsolate();
+		v8::Isolate::Scope IsolateScope(Isolate);
+		v8::HandleScope HandleScope(Isolate);
+		v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
+		v8::Context::Scope ContextScope(Context);
+
+		const FName MsgKey = *FV8Utils::ToFString(Info.GetIsolate(), Info[0]);
+		UObject* ListenedObj = FV8Utils::GetUObject(Context, Info[1]);
+		uint64 Key = Info[NumArgs > 2 ? 2 : 1]->IntegerValue(Context).ToChecked();
+
+		if (ListenedObj)
+			FGMPHelper::ScriptUnbindMessage(MsgKey, ListenedObj);
+		else
+			FGMPHelper::ScriptUnbindMessage(MsgKey, Key);
+	}
+}
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4750)  // warning C4750: function with _alloca() inlined into a loop
+#endif
+// function NotifyObjectMessage(obj, msgkey, ...)
+inline void v8_NotifyObjectMessage(const v8::FunctionCallbackInfo<v8::Value>& Info)
+{
+	auto Isolate = Info.GetIsolate();
+	bool bSucc = false;
+	[&] {
+		v8::Isolate::Scope IsolateScope(Isolate);
+		v8::HandleScope HandleScope(Isolate);
+		v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
+		v8::Context::Scope ContextScope(Context);
+
+		auto NumArgs = Info.Length();
+		if (!ensure(NumArgs >= 2))
+		{
+			FV8Utils::ThrowException(Isolate, "ivalid call to NotifyObjectMessage");
+			return;
+		}
+
+		UObject* Sender = FV8Utils::GetUObject(Context, Info[0]);
+		FName MsgKey = *FV8Utils::ToFString(Isolate, Info[1]);
+
+#if GMP_TRACE_SCRIPT_SRC && WITH_EDITOR
+		if (const FString Loc = GMP_Puerts_ResolveCallerLoc(Isolate); !Loc.IsEmpty())
+			GMP::TraceScriptMessageSource(MsgKey, Loc, /*bIsListen*/ false);
+#endif
+
+		FGMPPropStackHolderArray PropHolders;
+		PropHolders.Reserve(NumArgs);
+
+		auto Types = GMP::FMessageBody::GetMessageTypes(Sender, MsgKey);
+		const int32 ParamNum = Types ? Types->Num() : (NumArgs - 2);
+		if (Types && !ensure(NumArgs - 2 >= Types->Num()))
+		{
+			GMP_WARNING(TEXT("[GMPPuerts] arg count mismatch %s"), *MsgKey.ToString());
+			return;
+		}
+
+		auto InferProp = [&](const v8::Local<v8::Value>& V) -> FProperty* {
+			if (FV8Utils::GetUObject(Context, V)) return GMP::TClass2Prop<UObject*>::GetProperty();
+			if (V->IsBoolean())                   return GMP::TClass2Prop<bool>::GetProperty();
+			if (V->IsInt32() || V->IsBigInt())    return GMP::TClass2Prop<int64>::GetProperty();
+			if (V->IsNumber())                    return GMP::TClass2Prop<double>::GetProperty();
+			if (V->IsString())                    return GMP::TClass2Prop<FString>::GetProperty();
+			return nullptr;
+		};
+
+		for (auto i = 2; i < 2 + ParamNum; ++i)
+		{
+			FProperty* Prop = nullptr;
+			if (Types)
+			{
+				if (!GMPReflection::PropertyFromString((*Types)[i - 2].ToString(), Prop))
+					return;
+			}
+			else if (!(Prop = InferProp(Info[i])))
+			{
+				GMP_WARNING(TEXT("[GMPPuerts] cannot infer type for arg %d of unregistered tag %s"), i - 2, *MsgKey.ToString());
+				return;
+			}
+			auto Inc = FPropertyTranslator::Create(Prop);
+			if (!Inc)
+				return;
+
+			auto& Holder = PropHolders.Emplace_GetRef(Prop, FMemory_Alloca_Aligned(Prop->ElementSize, Prop->GetMinAlignment()));
+			Inc->JsToUE(Isolate, Context, Info[i], Holder.GetAddr(), false);
+		}
+
+		GMP::FMessageHub::FTagTypeSetter SetMsgTagType(TEXT("Puerts"));
+		GMP::FTypedAddresses Params;
+		Params.Reserve(NumArgs);
+		bSucc = FGMPHelper::ScriptNotifyMessage(MsgKey, FGMPTypedAddr::FromHolderArray(Params, PropHolders), Sender);
+	}();
+
+	Info.GetReturnValue().Set(bSucc);
+	if (!bSucc)
+		FV8Utils::ThrowException(Info.GetIsolate(), "unable notify message");
+}
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
+#if defined(GMP_PUERTS_STATIC_BIND) && GMP_PUERTS_STATIC_BIND
+void GMP_RegisterPuertsStaticBinds(v8::Local<v8::Context> Context, v8::Local<v8::Object> Exports);  // defined in generated GMPPuertsBinds.gen.cpp
+#endif
+
+inline void GMP_ExportToPuerts(v8::Local<v8::Context> Context, v8::Local<v8::Object> Exports)
+{
+	v8::Isolate* Isolate = Context->GetIsolate();
+#if 0
+	v8::Persistent<Context> Context = v8::Context::New(Context->GetIsolate(), Context->Global());
+
+#else
+	Exports->Set(Context, FV8Utils::ToV8String(Isolate, "NotifyObjectMessage"), v8::FunctionTemplate::New(Isolate, v8_NotifyObjectMessage)->GetFunction(Context).ToLocalChecked().As<v8::Value>()).Check();
+	Exports->Set(Context, FV8Utils::ToV8String(Isolate, "ListenObjectMessage"), v8::FunctionTemplate::New(Isolate, v8_ListenObjectMessage)->GetFunction(Context).ToLocalChecked().As<v8::Value>()).Check();
+	Exports->Set(Context, FV8Utils::ToV8String(Isolate, "ListenRowMessage"), v8::FunctionTemplate::New(Isolate, v8_ListenRowMessage)->GetFunction(Context).ToLocalChecked().As<v8::Value>()).Check();
+	Exports->Set(Context, FV8Utils::ToV8String(Isolate, "UnbindObjectMessage"), v8::FunctionTemplate::New(Isolate, v8_UnbindObjectMessage)->GetFunction(Context).ToLocalChecked().As<v8::Value>()).Check();
+	Exports->Set(Context, FV8Utils::ToV8String(Isolate, "UnListenObjectMessage"), v8::FunctionTemplate::New(Isolate, v8_UnbindObjectMessage)->GetFunction(Context).ToLocalChecked().As<v8::Value>()).Check();
+
+#if defined(GMP_PUERTS_STATIC_BIND) && GMP_PUERTS_STATIC_BIND
+	GMP_RegisterPuertsStaticBinds(Context, Exports);  // per-tag strongly-typed Notify_<id> from generated GMPPuertsBinds.gen.cpp
+#endif
+
+	// Isolate-keyed listens when Exports is GC'd (context torn down), preventing dangling FGMPSigSource(Isolate) entries.
+	BindWeakCallback(Isolate, Exports, [Isolate] { FGMPSigSource::RemoveSource(Isolate); });
+#endif
+}
+
+struct GMP_ExportToPuertsObj
+{
+	GMP_ExportToPuertsObj() { RegisterAddon("GMP", GMP_ExportToPuerts); }
+} GMP_ExportToPuertsObjReg;
+}  // namespace PuertsSupport
+#endif
+
+// how to use:
+// 1. add "GMP" to PrivateDependencyModuleNames in JsEnv.Build.cs (and PrivateIncludePaths to GMP/Source/GMP/Shared if unseen)
+// 2. just include this header into a JsEnv-module TU (e.g. JsEnvImpl.cpp); the static GMP_ExportToPuertsObjReg auto-registers the "GMP" addon
+// 3. no manual lifecycle wiring needed: require('GMP') resolves via FindModule->FindAddonRegisterFunc; Isolate teardown drops listens via the Exports weak callback
+
+#if 0
+// GMP.d.ts  (place under Typing/GMP/index.d.ts, alongside puerts' own cpp/ffi/ue typings)
+declare module "GMP" {
+    /**
+     * Listen for a message. Returns a key usable with UnbindObjectMessage.
+     * @param weakObj lifetime owner; pass null to let the callback object drive lifetime
+     * @param callback a function, or the name of a global function
+     * @param times max invocations, -1 for unlimited
+     */
+    function ListenObjectMessage(watchedObj: object, msgKey: string, weakObj: object | null, callback: Function | string, times?: number): number;
+
+    /** Unbind by listened object, or by the key returned from ListenObjectMessage. */
+    function UnbindObjectMessage(msgKey: string, listenedObj: object | number, key?: number): void;
+    function UnListenObjectMessage(msgKey: string, listenedObj: object | number, key?: number): void;
+
+    /** Notify a message; extra args must match the signature registered on the native side. */
+    function NotifyObjectMessage(sender: object, msgKey: string, ...args: any[]): boolean;
+}
+
+// example.ts
+import { ListenObjectMessage, UnbindObjectMessage, NotifyObjectMessage } from 'GMP';
+
+const key = ListenObjectMessage(watchedActor, 'Player.Hurt', null, (damage: number, causer: object) => {
+    console.log(`hurt ${damage} by`, causer);
+});
+NotifyObjectMessage(senderActor, 'Player.Hurt', 42, causerActor);
+UnbindObjectMessage('Player.Hurt', watchedActor, key);
+#endif

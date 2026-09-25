@@ -15,7 +15,6 @@ public:
 
 	virtual FName GetCategoryName() const override;
 
-	/** 空则用工程内的 Asset/UI。 */
 	UPROPERTY(Config, EditAnywhere, Category = "2D", meta = (DisplayName = "界面图包目录"))
 	FDirectoryPath UiPackRoot;
 

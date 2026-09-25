@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "Data/BoxPushLevelTypes.h"
+#include "Data/VisualComps.h"
 #include "BoxBoard.generated.h"
 
 class UInteractableDef;
@@ -38,6 +39,10 @@ struct BOXPUSH_API FBoxRuntimeInstance
 	/** -1 = 没有回程；0 = 这一步表现完立刻回；>0 = 再过几步玩家操作后回 */
 	UPROPERTY()
 	int32 MovesUntilReturn = -1;
+
+	/** 上一拍这个 Trigger 上是否有匹配对象。快照带着它，撤回不补发重叠。 */
+	UPROPERTY()
+	bool bTriggerOccupied = false;
 };
 
 USTRUCT()
@@ -83,6 +88,9 @@ struct BOXPUSH_API FBoxStepResult
 
 	UPROPERTY()
 	TArray<FName> FiredEvents;
+
+	UPROPERTY()
+	TArray<FVisualTransitionCue> VisualTransitions;
 };
 
 /** 地图管理器：关卡格子、占位、邻格查询。运行时格子状态活在这里。不负责走/推规则。 */

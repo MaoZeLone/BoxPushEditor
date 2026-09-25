@@ -45,6 +45,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "State")
 	TArray<FInteractableTransitionDef> Transitions;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual", meta = (DisplayName = "状态表现"))
+	TArray<FStateVisual> StateVisuals;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visual", meta = (DisplayName = "转移表现"))
+	TArray<FTransitionVisual> TransitionVisuals;
+
+	UFUNCTION()
+	TArray<FString> GetVisualStateOptions() const;
+
+	UFUNCTION()
+	TArray<FString> GetVisualCompOptions() const;
+
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 	virtual void PostLoad() override;
 
@@ -56,7 +68,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BoxPush|Interactable")
 	FName GetDefaultState() const;
 
-	FName ResolveTransition(FName FromState, FName EventId) const;
+	FName ResolveTransition(FName FromState, FName EventId, const TArray<FBoxInstanceOverride>* Overrides = nullptr) const;
+
+	/** BeginOverlap / EndOverlap。OnEvent 不走这里。 */
+	FName ResolveCondition(FName FromState, EBoxTransitionCondition Condition) const;
 
 	const FInteractableStateDef* FindState(FName StateId) const;
 

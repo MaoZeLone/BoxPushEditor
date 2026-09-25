@@ -7,6 +7,7 @@
 
 class UInteractableDef;
 class USceneComponent;
+class UStaticMeshComponent;
 class UVisualSpriteComp;
 
 UCLASS()
@@ -20,6 +21,7 @@ public:
 	void SetupFromInstance(const FBoxRuntimeInstance& Inst);
 	void SetCell(FIntPoint Cell, bool bInstant);
 	void SetState(FName StateId);
+	void ApplyTransitionVisual(const FVisualTransitionCue& Cue);
 	FName GetInstanceId() const { return InstanceId; }
 
 	virtual void Tick(float DeltaSeconds) override;
@@ -30,7 +32,10 @@ public:
 private:
 	void ClearVisuals();
 	void RebuildSprites();
-	void RefreshVisibility();
+	void RestoreDefaultLook();
+	void ApplyTasks(const TArray<FVisualTask>& Tasks);
+	UStaticMeshComponent* FindSprite(FName CompId) const;
+	const UVisualSpriteComp* FindSpriteComp(FName CompId) const;
 
 	UPROPERTY()
 	TObjectPtr<const UInteractableDef> Def;

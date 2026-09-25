@@ -7,6 +7,7 @@ public class BoxPush : ModuleRules
 	public BoxPush(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+		bUseUnity = false;
 	
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
@@ -26,7 +27,8 @@ public class BoxPush : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"ImageWrapper",
-			"ImageCore"
+			"ImageCore",
+			"GMP"
 		});
 		
 		// Uncomment if you are using online features

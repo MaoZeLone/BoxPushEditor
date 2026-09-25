@@ -55,6 +55,11 @@ namespace BoxInstanceParams
 		return Row && Row->Kind == EBoxParamKind::Name ? Row->NameValue : Default;
 	}
 
+	FName ResolveOverriddenName(const TArray<FBoxInstanceOverride>& Overrides, FName CompId, FName Key, FName Default)
+	{
+		return ResolveName(Overrides, CompId, Key, Default, true);
+	}
+
 	FGameplayTag ResolveTag(const TArray<FBoxInstanceOverride>& Overrides, FName CompId, FName Key, FGameplayTag Default, bool bAllow)
 	{
 		if (!bAllow)
@@ -240,6 +245,84 @@ namespace BoxInstanceParams
 				}
 			}
 		}
+		auto StateCaption = [&](FName StateId) -> FString
+		{
+			if (StateId.IsNone())
+			{
+				return FString();
+			}
+			if (const FInteractableStateDef* Found = Def->FindState(StateId))
+			{
+				if (!Found->DisplayName.IsEmpty())
+				{
+					return Found->DisplayName.ToString();
+				}
+			}
+			return StateId.ToString();
+		};
+		auto AddEventName = [&](FName CompId, FName Key, const FText& Label, FName DefaultName)
+		{
+			AddName(Out, Overrides, CompId, Key, Label, DefaultName, true);
+			if (Out.Num() > 0)
+			{
+				Out.Last().bCaptionAbove = true;
+			}
+		};
+		for (const FInteractableStateDef& State : Def->States)
+		{
+			const FString StateName = StateCaption(State.StateId);
+			auto AddPhase = [&](const TArray<FInteractableStateActionDef>& Actions, EBoxStateActionPhase Phase, const FString& PhaseLabel)
+			{
+				for (int32 Index = 0; Index < Actions.Num(); ++Index)
+				{
+					const FInteractableStateActionDef& Action = Actions[Index];
+					if (Action.Type != EBoxStateActionType::FireEvent || !Action.bAllowOverride)
+					{
+						continue;
+					}
+					AddEventName(
+						State.StateId,
+						FireEventOverrideKey(Phase, Index),
+						FText::FromString(PhaseLabel),
+						Action.EventId);
+				}
+			};
+			AddPhase(State.OnEnter, EBoxStateActionPhase::Enter, FString::Printf(TEXT("进入「%s」时发出此事件"), *StateName));
+			AddPhase(State.OnStay, EBoxStateActionPhase::Stay, FString::Printf(TEXT("停在「%s」期间发出此事件"), *StateName));
+			AddPhase(State.OnExit, EBoxStateActionPhase::Exit, FString::Printf(TEXT("离开「%s」时发出此事件"), *StateName));
+		}
+		for (int32 Index = 0; Index < Def->Transitions.Num(); ++Index)
+		{
+			const FInteractableTransitionDef& Row = Def->Transitions[Index];
+			if (Row.Condition != EBoxTransitionCondition::OnEvent || !Row.bAllowOverride)
+			{
+				continue;
+			}
+			const FString FromName = StateCaption(Row.FromState);
+			const FString ToName = StateCaption(Row.ToState);
+			FString Label;
+			if (!FromName.IsEmpty() && !ToName.IsEmpty())
+			{
+				Label = FString::Printf(TEXT("处于「%s」时，听到此事件就切到「%s」"), *FromName, *ToName);
+			}
+			else if (!FromName.IsEmpty())
+			{
+				Label = FString::Printf(TEXT("处于「%s」时，听到此事件就转移"), *FromName);
+			}
+			else if (!ToName.IsEmpty())
+			{
+				Label = FString::Printf(TEXT("听到此事件就切到「%s」"), *ToName);
+			}
+			else
+			{
+				Label = TEXT("听到此事件就转移");
+			}
+			AddEventName(
+				TransitionOverrideComp(),
+				TransitionOverrideKey(Index),
+				FText::FromString(Label),
+				Row.EventId);
+		}
 	}
 
 	bool FindDefault(const UInteractableDef* Def, FName CompId, FName Key, FBoxShownParam& Out)
@@ -260,6 +343,62 @@ namespace BoxInstanceParams
 				return false;
 			}
 			return FillDefault(Comp, Prop, Out);
+		}
+		for (const FInteractableStateDef& State : Def->States)
+		{
+			if (State.StateId != CompId)
+			{
+				continue;
+			}
+			auto MatchPhase = [&](const TArray<FInteractableStateActionDef>& Actions, EBoxStateActionPhase Phase) -> bool
+			{
+				for (int32 Index = 0; Index < Actions.Num(); ++Index)
+				{
+					if (FireEventOverrideKey(Phase, Index) != Key)
+					{
+						continue;
+					}
+					const FInteractableStateActionDef& Action = Actions[Index];
+					if (Action.Type != EBoxStateActionType::FireEvent || !Action.bAllowOverride)
+					{
+						return false;
+					}
+					Out = FBoxShownParam();
+					Out.CompId = CompId;
+					Out.Key = Key;
+					Out.Kind = EBoxParamKind::Name;
+					Out.NameValue = Action.EventId;
+					return true;
+				}
+				return false;
+			};
+			if (MatchPhase(State.OnEnter, EBoxStateActionPhase::Enter)
+				|| MatchPhase(State.OnStay, EBoxStateActionPhase::Stay)
+				|| MatchPhase(State.OnExit, EBoxStateActionPhase::Exit))
+			{
+				return true;
+			}
+		}
+		if (CompId == TransitionOverrideComp())
+		{
+			for (int32 Index = 0; Index < Def->Transitions.Num(); ++Index)
+			{
+				if (TransitionOverrideKey(Index) != Key)
+				{
+					continue;
+				}
+				const FInteractableTransitionDef& Row = Def->Transitions[Index];
+				if (Row.Condition != EBoxTransitionCondition::OnEvent || !Row.bAllowOverride)
+				{
+					return false;
+				}
+				Out = FBoxShownParam();
+				Out.CompId = CompId;
+				Out.Key = Key;
+				Out.Kind = EBoxParamKind::Name;
+				Out.NameValue = Row.EventId;
+				return true;
+			}
 		}
 		return false;
 	}
@@ -377,12 +516,39 @@ namespace BoxInstanceParams
 		}
 	}
 
+	const FVisualTask* BlockingTask(const FBoxRuntimeInstance& Inst)
+	{
+		if (!Inst.Def)
+		{
+			return nullptr;
+		}
+		for (const FStateVisual& Row : Inst.Def->StateVisuals)
+		{
+			if (Row.StateId != Inst.CurrentState)
+			{
+				continue;
+			}
+			for (const FVisualTask& Task : Row.Tasks)
+			{
+				if (Task.Type == EVisualTaskType::SetBlocking)
+				{
+					return &Task;
+				}
+			}
+		}
+		return nullptr;
+	}
+
 	bool BlocksPlayer(const FBoxRuntimeInstance& Inst)
 	{
 		const UBlockingLogic* Blocking = Inst.Def ? Inst.Def->FindLogic<UBlockingLogic>() : nullptr;
 		if (!Blocking)
 		{
 			return false;
+		}
+		if (const FVisualTask* Task = BlockingTask(Inst))
+		{
+			return Task->bBlocksPlayer;
 		}
 		return ResolveBool(Inst.Overrides, Blocking->CompId, GET_MEMBER_NAME_CHECKED(UBlockingLogic, bBlocksPlayer), Blocking->bBlocksPlayer, Blocking->bAllowBlocksPlayer);
 	}
@@ -393,6 +559,10 @@ namespace BoxInstanceParams
 		if (!Blocking)
 		{
 			return false;
+		}
+		if (const FVisualTask* Task = BlockingTask(Inst))
+		{
+			return Task->bBlocksPush;
 		}
 		return ResolveBool(Inst.Overrides, Blocking->CompId, GET_MEMBER_NAME_CHECKED(UBlockingLogic, bBlocksPush), Blocking->bBlocksPush, Blocking->bAllowBlocksPush);
 	}
@@ -447,5 +617,15 @@ namespace BoxInstanceParams
 			return FGameplayTag();
 		}
 		return ResolveTag(Inst.Overrides, Pedal->CompId, GET_MEMBER_NAME_CHECKED(UPedalLogic, AcceptType), Pedal->AcceptType, Pedal->bAllowAcceptType);
+	}
+
+	FGameplayTag TriggerAcceptType(const FBoxRuntimeInstance& Inst)
+	{
+		const UTriggerLogic* Trigger = Inst.Def ? Inst.Def->FindLogic<UTriggerLogic>() : nullptr;
+		if (!Trigger)
+		{
+			return FGameplayTag();
+		}
+		return ResolveTag(Inst.Overrides, Trigger->CompId, GET_MEMBER_NAME_CHECKED(UTriggerLogic, AcceptType), Trigger->AcceptType, Trigger->bAllowAcceptType);
 	}
 }

@@ -2,6 +2,8 @@
 
 #include "Data/InteractableDef.h"
 #include "Data/VisualComps.h"
+#include "Components/StaticMeshComponent.h"
+#include "Data/VisualComps.h"
 #include "Engine/Texture2D.h"
 #include "Match/BoxGrid.h"
 #include "Match/BoxSokobanSheet.h"
@@ -65,19 +67,12 @@ void ABoxInteractableActor::RebuildSprites()
 			Parent = SceneRoot;
 		}
 
-		USceneComponent* Node = nullptr;
-		const float Span = Comp->WorldSpan > 0.f ? Comp->WorldSpan : BoxSokoban::TileSpan();
-		if (UTexture2D* Texture = BoxSokoban::ResolveSprite(
-			Comp->Texture.LoadSynchronous(), Comp->SourceX, Comp->SourceY, Comp->SourceW, Comp->SourceH, true))
-		{
-			Node = BoxSokoban::SpawnSpriteTexture(this, Parent, Texture, Span);
-		}
-		if (!Node)
-		{
-			Node = NewObject<USceneComponent>(this);
-			Node->SetupAttachment(Parent);
-			Node->RegisterComponent();
-		}
+		UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(this);
+		Mesh->SetupAttachment(Parent);
+		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Mesh->SetCastShadow(false);
+		Mesh->RegisterComponent();
+		USceneComponent* Node = Mesh;
 
 		Node->SetRelativeLocation(Comp->RelativeLocation);
 		Node->SetRelativeRotation(Comp->RelativeRotation);
@@ -103,28 +98,158 @@ void ABoxInteractableActor::SetCell(FIntPoint Cell, bool bInstant)
 	InterpAlpha = 0.f;
 }
 
-void ABoxInteractableActor::SetState(FName StateId)
+const UVisualSpriteComp* ABoxInteractableActor::FindSpriteComp(FName CompId) const
 {
-	CurrentState = StateId;
-	RefreshVisibility();
+	if (!Def)
+	{
+		return nullptr;
+	}
+	for (const TObjectPtr<UVisualSpriteComp>& Comp : Def->SpriteComps)
+	{
+		if (Comp && Comp->CompId == CompId)
+		{
+			return Comp;
+		}
+	}
+	return nullptr;
 }
 
-void ABoxInteractableActor::RefreshVisibility()
+UStaticMeshComponent* ABoxInteractableActor::FindSprite(FName CompId) const
+{
+	if (!Def)
+	{
+		return nullptr;
+	}
+	int32 NodeIndex = 0;
+	for (const TObjectPtr<UVisualSpriteComp>& Comp : Def->SpriteComps)
+	{
+		if (!Comp || Comp->CompId.IsNone())
+		{
+			continue;
+		}
+		USceneComponent* Node = VisualNodes.IsValidIndex(NodeIndex) ? VisualNodes[NodeIndex].Get() : nullptr;
+		++NodeIndex;
+		if (Comp->CompId == CompId)
+		{
+			return Cast<UStaticMeshComponent>(Node);
+		}
+	}
+	return nullptr;
+}
+
+void ABoxInteractableActor::ApplyTasks(const TArray<FVisualTask>& Tasks)
+{
+	for (const FVisualTask& Task : Tasks)
+	{
+		UStaticMeshComponent* Mesh = FindSprite(Task.CompId);
+		const UVisualSpriteComp* Comp = FindSpriteComp(Task.CompId);
+		if (!Mesh || !Comp)
+		{
+			continue;
+		}
+		if (Task.Type == EVisualTaskType::SetBlocking)
+		{
+			continue;
+		}
+		if (Task.Type == EVisualTaskType::SetVisible)
+		{
+			Mesh->SetHiddenInGame(!Task.bVisible);
+			Mesh->SetVisibility(Task.bVisible, true);
+			continue;
+		}
+		const float Span = Comp->WorldSpan > 0.f ? Comp->WorldSpan : BoxSokoban::TileSpan();
+		UTexture2D* Texture = BoxSokoban::ResolveSprite(
+			Task.Texture.LoadSynchronous(), Task.SourceX, Task.SourceY, Task.SourceW, Task.SourceH, true);
+		if (!Texture)
+		{
+			Mesh->SetHiddenInGame(true);
+			Mesh->SetVisibility(false, true);
+			continue;
+		}
+		Mesh->SetHiddenInGame(false);
+		Mesh->SetVisibility(true, true);
+		BoxSokoban::ApplySpriteTexture(Mesh, Texture, Span);
+	}
+}
+
+void ABoxInteractableActor::RestoreDefaultLook()
 {
 	if (!Def)
 	{
 		return;
 	}
-	for (int32 Index = 0; Index < Def->SpriteComps.Num() && Index < VisualNodes.Num(); ++Index)
+	int32 NodeIndex = 0;
+	for (const TObjectPtr<UVisualSpriteComp>& Comp : Def->SpriteComps)
 	{
-		const UVisualSpriteComp* Comp = Def->SpriteComps[Index];
-		USceneComponent* Node = VisualNodes[Index];
-		if (!Comp || !Node)
+		if (!Comp || Comp->CompId.IsNone())
+		{
+			continue;
+		}
+		UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(VisualNodes.IsValidIndex(NodeIndex) ? VisualNodes[NodeIndex].Get() : nullptr);
+		++NodeIndex;
+		if (!Mesh)
 		{
 			continue;
 		}
 		const bool bVisible = Comp->VisibleInStates.Num() == 0 || Comp->VisibleInStates.Contains(CurrentState);
-		Node->SetVisibility(bVisible, true);
+		const float Span = Comp->WorldSpan > 0.f ? Comp->WorldSpan : BoxSokoban::TileSpan();
+		UTexture2D* Texture = BoxSokoban::ResolveSprite(
+			Comp->Texture.LoadSynchronous(), Comp->SourceX, Comp->SourceY, Comp->SourceW, Comp->SourceH, true);
+		if (!bVisible || !Texture)
+		{
+			Mesh->SetHiddenInGame(true);
+			Mesh->SetVisibility(false, true);
+			continue;
+		}
+		Mesh->SetHiddenInGame(false);
+		Mesh->SetVisibility(true, true);
+		BoxSokoban::ApplySpriteTexture(Mesh, Texture, Span);
+	}
+}
+
+void ABoxInteractableActor::SetState(FName StateId)
+{
+	CurrentState = StateId;
+	RestoreDefaultLook();
+	if (!Def)
+	{
+		return;
+	}
+	for (const FStateVisual& Row : Def->StateVisuals)
+	{
+		if (Row.StateId == StateId)
+		{
+			ApplyTasks(Row.Tasks);
+			break;
+		}
+	}
+}
+
+void ABoxInteractableActor::ApplyTransitionVisual(const FVisualTransitionCue& Cue)
+{
+	if (!Def || Cue.InstanceId != InstanceId)
+	{
+		return;
+	}
+	for (const FTransitionVisual& Row : Def->TransitionVisuals)
+	{
+		if (Row.Condition != Cue.Condition)
+		{
+			continue;
+		}
+		if (!Row.FromState.IsNone() && Row.FromState != Cue.FromState)
+		{
+			continue;
+		}
+		if (!Row.ToState.IsNone() && Row.ToState != Cue.ToState)
+		{
+			continue;
+		}
+		if (Row.Condition == EBoxTransitionCondition::OnEvent && Row.EventId != Cue.EventId)
+		{
+			continue;
+		}
+		ApplyTasks(Row.Tasks);
 	}
 }
 

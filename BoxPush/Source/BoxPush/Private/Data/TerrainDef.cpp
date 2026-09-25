@@ -1,7 +1,8 @@
 #include "Data/TerrainDef.h"
 
 #include "BoxPushTags.h"
-#include "Data/BoxAssetPaths.h"
+#include "Engine/AssetManager.h"
+
 FPrimaryAssetId UTerrainDef::GetPrimaryAssetId() const
 {
 	const FName Id = TerrainId.IsNone() ? GetFName() : TerrainId;
@@ -14,7 +15,31 @@ UTerrainDef* UTerrainDef::LoadById(FName InTerrainId)
 	{
 		return nullptr;
 	}
-	return LoadObject<UTerrainDef>(nullptr, *BoxAssetPaths::TerrainObject(InTerrainId.ToString()));
+	if (!UAssetManager::IsInitialized())
+	{
+		return nullptr;
+	}
+	const FSoftObjectPath Path = UAssetManager::Get().GetPrimaryAssetPath(FPrimaryAssetId(TEXT("TerrainDef"), InTerrainId));
+	return Path.IsValid() ? Cast<UTerrainDef>(Path.TryLoad()) : nullptr;
+}
+
+UTerrainDef* UTerrainDef::FindByCell(ETerrainCell Cell)
+{
+	if (!UAssetManager::IsInitialized())
+	{
+		return nullptr;
+	}
+	TArray<FPrimaryAssetId> Ids;
+	UAssetManager::Get().GetPrimaryAssetIdList(FPrimaryAssetType(TEXT("TerrainDef")), Ids);
+	for (const FPrimaryAssetId& Id : Ids)
+	{
+		UTerrainDef* Def = LoadById(Id.PrimaryAssetName);
+		if (Def && Def->Cell == Cell)
+		{
+			return Def;
+		}
+	}
+	return nullptr;
 }
 
 void UTerrainDef::ApplyOfficialDefaults(FName InTerrainId)

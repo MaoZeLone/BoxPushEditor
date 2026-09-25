@@ -5,21 +5,110 @@
 #include "Data/InteractableDef.h"
 #include "Data/InteractableLogic.h"
 #include "Data/InteractableStateRuntime.h"
+#include "GMPCore.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBoxGridSim, Log, All);
 
 void UBoxGridSim::BeginActionDispatch(TArray<FName>* FiredEvents)
 {
 	EnteredThisStep.Reset();
+	StepVisuals.Reset();
 	ActionFiredSink = FiredEvents;
 	bDispatchStateActions = true;
 }
 
+void UBoxGridSim::BeginDestroy()
+{
+	if (bListening)
+	{
+		FGMPHelper::UnbindMessage(MSGKEY("BoxPush.Interactable.Event"), this);
+		bListening = false;
+	}
+	Super::BeginDestroy();
+}
+
+void UBoxGridSim::EnsureEventListener()
+{
+	if (bListening || !GetWorld())
+	{
+		return;
+	}
+
+	bListening = true;
+	FGMPHelper::ListenWorldMessage(
+		this,
+		MSGKEY("BoxPush.Interactable.Event"),
+		this,
+		[this](const FBoxInteractableEvent& Event)
+		{
+			DeliverBroadcast(Event.EventId);
+		});
+}
+
+void UBoxGridSim::DeliverBroadcast(FName EventId)
+{
+	if (!Board || EventId.IsNone())
+	{
+		return;
+	}
+
+	for (FBoxRuntimeInstance& Inst : Board->EditInstances())
+	{
+		const uint64 Key = (uint64(GetTypeHash(Inst.InstanceId)) << 32) ^ uint64(GetTypeHash(EventId));
+		if (DeliveredThisStep.Contains(Key))
+		{
+			continue;
+		}
+		DeliveredThisStep.Add(Key);
+		ApplyEvent(Inst, EventId, nullptr);
+	}
+}
+
+void UBoxGridSim::DrainBroadcast()
+{
+	if (bDraining || PendingBroadcast.Num() == 0)
+	{
+		return;
+	}
+
+	EnsureEventListener();
+	bDraining = true;
+	for (int32 Generation = 0; Generation < 4 && PendingBroadcast.Num() > 0; ++Generation)
+	{
+		TArray<FName> Batch = MoveTemp(PendingBroadcast);
+		PendingBroadcast.Reset();
+		for (const FName EventId : Batch)
+		{
+			if (EventId.IsNone())
+			{
+				continue;
+			}
+			if (!GetWorld())
+			{
+				DeliverBroadcast(EventId);
+				continue;
+			}
+			FBoxInteractableEvent Payload;
+			Payload.EventId = EventId;
+			FGMPHelper::NotifyWorldMessage(this, MSGKEY("BoxPush.Interactable.Event"), Payload);
+		}
+	}
+	if (PendingBroadcast.Num() > 0)
+	{
+		UE_LOG(LogBoxGridSim, Warning, TEXT("交互物事件连锁超过 4 层，后面的不再送"));
+		PendingBroadcast.Reset();
+	}
+	bDraining = false;
+}
+
 void UBoxGridSim::EndActionDispatch()
 {
+	DrainBroadcast();
 	ActionFiredSink = nullptr;
 	bDispatchStateActions = false;
 	EnteredThisStep.Reset();
+	DeliveredThisStep.Reset();
+	PendingBroadcast.Reset();
 }
 
 void UBoxGridSim::RunStateActions(FBoxRuntimeInstance& Inst, FName StateId, EBoxStateActionPhase Phase)
@@ -59,6 +148,7 @@ void UBoxGridSim::RunStateActions(FBoxRuntimeInstance& Inst, FName StateId, EBox
 	Context.Phase = Phase;
 	Context.Instance = &Inst;
 	Context.FiredEvents = ActionFiredSink;
+	Context.BroadcastQueue = &PendingBroadcast;
 	ExecuteInteractableStateActions(*Actions, Context);
 }
 
@@ -153,16 +243,26 @@ int32 UBoxGridSim::PushTravel(FBoxRuntimeInstance& Box, FIntPoint Dir) const
 	return Travel;
 }
 
-void UBoxGridSim::ApplyEvent(FBoxRuntimeInstance& Inst, FName EventId, FBoxInstanceDelta* Delta)
+void UBoxGridSim::NoteVisualTransition(const FBoxRuntimeInstance& Inst, FName FromState, EBoxTransitionCondition Condition, FName EventId, FName ToState)
 {
-	if (!Inst.Def)
+	if (!bDispatchStateActions)
 	{
 		return;
 	}
-	const FName NewState = Inst.Def->ResolveTransition(Inst.CurrentState, EventId);
+	FVisualTransitionCue Cue;
+	Cue.InstanceId = Inst.InstanceId;
+	Cue.FromState = FromState;
+	Cue.Condition = Condition;
+	Cue.EventId = EventId;
+	Cue.ToState = ToState;
+	StepVisuals.Add(Cue);
+}
+
+bool UBoxGridSim::ApplyResolvedState(FBoxRuntimeInstance& Inst, FName NewState, FBoxInstanceDelta* Delta)
+{
 	if (NewState.IsNone() || NewState == Inst.CurrentState)
 	{
-		return;
+		return false;
 	}
 
 	if (bDispatchStateActions)
@@ -181,6 +281,62 @@ void UBoxGridSim::ApplyEvent(FBoxRuntimeInstance& Inst, FName EventId, FBoxInsta
 	{
 		RunStateActions(Inst, NewState, EBoxStateActionPhase::Enter);
 	}
+	return true;
+}
+
+void UBoxGridSim::ApplyEvent(FBoxRuntimeInstance& Inst, FName EventId, FBoxInstanceDelta* Delta)
+{
+	if (!Inst.Def)
+	{
+		return;
+	}
+	const FName FromState = Inst.CurrentState;
+	const FName ToState = Inst.Def->ResolveTransition(FromState, EventId, &Inst.Overrides);
+	if (ApplyResolvedState(Inst, ToState, Delta))
+	{
+		NoteVisualTransition(Inst, FromState, EBoxTransitionCondition::OnEvent, EventId, ToState);
+	}
+}
+
+void UBoxGridSim::ApplyCondition(FBoxRuntimeInstance& Inst, EBoxTransitionCondition Condition)
+{
+	if (!Inst.Def)
+	{
+		return;
+	}
+	const FName FromState = Inst.CurrentState;
+	const FName ToState = Inst.Def->ResolveCondition(FromState, Condition);
+	if (ApplyResolvedState(Inst, ToState, nullptr))
+	{
+		NoteVisualTransition(Inst, FromState, Condition, NAME_None, ToState);
+	}
+}
+
+bool UBoxGridSim::IsTriggerOccupied(const FBoxRuntimeInstance& Inst) const
+{
+	if (!Board || !Inst.Def || !Inst.Def->FindLogic<UTriggerLogic>())
+	{
+		return false;
+	}
+
+	const FGameplayTag Accept = BoxInstanceParams::TriggerAcceptType(Inst);
+	const bool bAnyone = !Accept.IsValid();
+	if (bAnyone && Board->GetPlayerCell() == Inst.Cell)
+	{
+		return true;
+	}
+	for (const FBoxRuntimeInstance& Other : Board->GetInstances())
+	{
+		if (Other.InstanceId == Inst.InstanceId || Other.Cell != Inst.Cell || !Other.Def)
+		{
+			continue;
+		}
+		if (bAnyone || UBoxTypeDisplayLibrary::MatchesType(Other.Def->Type, Accept))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void UBoxGridSim::RefreshOccupancyStates()
@@ -227,6 +383,16 @@ void UBoxGridSim::RefreshOccupancyStates()
 				}
 			}
 			ApplyEvent(Inst, bOccupied ? TEXT("Pressed") : TEXT("Released"), nullptr);
+		}
+
+		if (Inst.Def->FindLogic<UTriggerLogic>())
+		{
+			const bool bNow = IsTriggerOccupied(Inst);
+			if (bNow != Inst.bTriggerOccupied)
+			{
+				ApplyCondition(Inst, bNow ? EBoxTransitionCondition::BeginOverlap : EBoxTransitionCondition::EndOverlap);
+				Inst.bTriggerOccupied = bNow;
+			}
 		}
 	}
 }
@@ -417,6 +583,7 @@ bool UBoxGridSim::TryPlayerMove(FIntPoint Dir, bool bCanPush, FBoxStepResult& Ou
 		UndoStack.Add(MoveTemp(Before));
 		RedoStack.Reset();
 		MakePlayerDelta(Out, From, Dest);
+		Out.VisualTransitions = StepVisuals;
 		Out.bApplied = true;
 		Out.bWon = bWon;
 		return true;
@@ -434,12 +601,13 @@ bool UBoxGridSim::TryPlayerMove(FIntPoint Dir, bool bCanPush, FBoxStepResult& Ou
 	UndoStack.Add(MoveTemp(Before));
 	RedoStack.Reset();
 	MakePlayerDelta(Out, From, Dest);
+	Out.VisualTransitions = StepVisuals;
 	Out.bApplied = true;
 	Out.bWon = bWon;
 	return true;
 }
 
-void UBoxGridSim::FlushImmediateReturns(TArray<FBoxInstanceDelta>& OutMoves, TArray<FName>* OutFiredEvents)
+void UBoxGridSim::FlushImmediateReturns(TArray<FBoxInstanceDelta>& OutMoves, TArray<FName>* OutFiredEvents, TArray<FVisualTransitionCue>* OutVisuals)
 {
 	OutMoves.Reset();
 	if (!Board)
@@ -472,6 +640,10 @@ void UBoxGridSim::FlushImmediateReturns(TArray<FBoxInstanceDelta>& OutMoves, TAr
 	BeginActionDispatch(OutFiredEvents);
 	RefreshOccupancyStates();
 	EndActionDispatch();
+	if (OutVisuals)
+	{
+		*OutVisuals = StepVisuals;
+	}
 	bWon = ComputeWon();
 }
 

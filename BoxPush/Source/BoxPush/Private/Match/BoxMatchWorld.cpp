@@ -182,8 +182,8 @@ void ABoxMatchWorld::RebuildPresentation()
 	{
 		return;
 	}
-	const UTerrainDef* FloorDef = UTerrainDef::LoadById(TEXT("Floor"));
-	const UTerrainDef* WallDef = UTerrainDef::LoadById(TEXT("Wall"));
+	const UTerrainDef* FloorDef = UTerrainDef::FindByCell(ETerrainCell::Floor);
+	const UTerrainDef* WallDef = UTerrainDef::FindByCell(ETerrainCell::Wall);
 
 	for (int32 Y = 0; Y < Board->GetHeight(); ++Y)
 	{
@@ -271,6 +271,17 @@ void ABoxMatchWorld::ApplyDeltas(const TArray<FBoxInstanceDelta>& Moves, bool bI
 	}
 }
 
+void ABoxMatchWorld::ApplyVisualCues(const TArray<FVisualTransitionCue>& Cues)
+{
+	for (const FVisualTransitionCue& Cue : Cues)
+	{
+		if (ABoxInteractableActor* Actor = Actors.FindRef(Cue.InstanceId))
+		{
+			Actor->ApplyTransitionVisual(Cue);
+		}
+	}
+}
+
 void ABoxMatchWorld::SetPlayerTags(FGameplayTag StateTag, bool bLocked)
 {
 	if (!Player)
@@ -305,23 +316,30 @@ void ABoxMatchWorld::BeginStep(const FBoxStepResult& Result, FGameplayTag StateT
 		Player->SetActorLocation(BoxGrid::CellToWorld(Result.PlayerFrom, 90.f));
 	}
 	ApplyDeltas(Result.Moves, false);
+	ApplyVisualCues(Result.VisualTransitions);
 }
 
 void ABoxMatchWorld::FinishPrimaryPhase()
 {
 	TArray<FBoxInstanceDelta> Returns;
 	TArray<FName> ReturnEvents;
+	TArray<FVisualTransitionCue> ReturnVisuals;
 	if (Sim)
 	{
-		Sim->FlushImmediateReturns(Returns, &ReturnEvents);
+		Sim->FlushImmediateReturns(Returns, &ReturnEvents, &ReturnVisuals);
 	}
 	ActiveStep.FiredEvents.Append(ReturnEvents);
-	if (Returns.Num() > 0)
+	ActiveStep.VisualTransitions.Append(ReturnVisuals);
+	if (Returns.Num() > 0 || ReturnVisuals.Num() > 0)
 	{
-		bReturnPhase = true;
+		bReturnPhase = Returns.Num() > 0;
 		StepElapsed = 0.f;
 		ApplyDeltas(Returns, false);
-		return;
+		ApplyVisualCues(ActiveStep.VisualTransitions);
+		if (Returns.Num() > 0)
+		{
+			return;
+		}
 	}
 	FinishStep();
 }
@@ -346,6 +364,7 @@ void ABoxMatchWorld::FinishStep()
 			}
 		}
 	}
+	ApplyVisualCues(ActiveStep.VisualTransitions);
 	for (const FName EventId : ActiveStep.FiredEvents)
 	{
 		UE_LOG(LogBoxMatchWorld, Log, TEXT("State action event %s"), *EventId.ToString());

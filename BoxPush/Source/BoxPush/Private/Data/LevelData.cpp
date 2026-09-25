@@ -54,11 +54,120 @@ void ULevelData::ApplyNewLevelDefaults(FName NewLevelId)
 	LevelId = NewLevelId;
 	DisplayName = FText::FromString(TEXT("未命名关卡"));
 	DesignerNote.Reset();
-	Width = DefaultSize;
-	Height = DefaultSize;
-	Cells.Init(ETerrainCell::Floor, Width * Height);
-	PlayerSpawn = FIntPoint(2, 3);
+	Width = 1;
+	Height = 1;
+	Cells.Init(ETerrainCell::Floor, 1);
+	PlayerSpawn = FIntPoint(0, 0);
 	Instances.Reset();
+}
+
+bool ULevelData::ExpandTo(FIntPoint& Cell)
+{
+	EnsureCellsSize();
+	const int32 ShiftX = Cell.X < 0 ? -Cell.X : 0;
+	const int32 ShiftY = Cell.Y < 0 ? -Cell.Y : 0;
+	const int32 NeedW = FMath::Max(Width + ShiftX, Cell.X + ShiftX + 1);
+	const int32 NeedH = FMath::Max(Height + ShiftY, Cell.Y + ShiftY + 1);
+	if (NeedW > MaxSize || NeedH > MaxSize || NeedW < MinSize || NeedH < MinSize)
+	{
+		return false;
+	}
+	if (NeedW == Width && NeedH == Height && ShiftX == 0 && ShiftY == 0)
+	{
+		return true;
+	}
+
+	TArray<ETerrainCell> Next;
+	Next.Init(ETerrainCell::Empty, NeedW * NeedH);
+	if (Cells.Num() == Width * Height)
+	{
+		for (int32 Y = 0; Y < Height; ++Y)
+		{
+			for (int32 X = 0; X < Width; ++X)
+			{
+				Next[(Y + ShiftY) * NeedW + (X + ShiftX)] = Cells[CellIndex(X, Y)];
+			}
+		}
+	}
+	Width = NeedW;
+	Height = NeedH;
+	Cells = MoveTemp(Next);
+	PlayerSpawn += FIntPoint(ShiftX, ShiftY);
+	for (FBoxLevelInstance& Inst : Instances)
+	{
+		Inst.Cell += FIntPoint(ShiftX, ShiftY);
+	}
+	Cell += FIntPoint(ShiftX, ShiftY);
+	return true;
+}
+
+void ULevelData::FitToContent()
+{
+	EnsureCellsSize();
+	int32 MinX = Width;
+	int32 MinY = Height;
+	int32 MaxX = -1;
+	int32 MaxY = -1;
+	auto Mark = [&](int32 X, int32 Y)
+	{
+		MinX = FMath::Min(MinX, X);
+		MinY = FMath::Min(MinY, Y);
+		MaxX = FMath::Max(MaxX, X);
+		MaxY = FMath::Max(MaxY, Y);
+	};
+	for (int32 Y = 0; Y < Height; ++Y)
+	{
+		for (int32 X = 0; X < Width; ++X)
+		{
+			if (GetCell(FIntPoint(X, Y)) != ETerrainCell::Empty)
+			{
+				Mark(X, Y);
+			}
+		}
+	}
+	if (IsInside(PlayerSpawn))
+	{
+		Mark(PlayerSpawn.X, PlayerSpawn.Y);
+	}
+	for (const FBoxLevelInstance& Inst : Instances)
+	{
+		if (IsInside(Inst.Cell))
+		{
+			Mark(Inst.Cell.X, Inst.Cell.Y);
+		}
+	}
+	if (MaxX < 0)
+	{
+		Width = 1;
+		Height = 1;
+		Cells.Init(ETerrainCell::Floor, 1);
+		PlayerSpawn = FIntPoint(0, 0);
+		return;
+	}
+
+	const int32 NewW = MaxX - MinX + 1;
+	const int32 NewH = MaxY - MinY + 1;
+	if (NewW == Width && NewH == Height && MinX == 0 && MinY == 0)
+	{
+		return;
+	}
+	TArray<ETerrainCell> Next;
+	Next.Reserve(NewW * NewH);
+	for (int32 Y = MinY; Y <= MaxY; ++Y)
+	{
+		for (int32 X = MinX; X <= MaxX; ++X)
+		{
+			Next.Add(GetCell(FIntPoint(X, Y)));
+		}
+	}
+	Width = NewW;
+	Height = NewH;
+	Cells = MoveTemp(Next);
+	PlayerSpawn -= FIntPoint(MinX, MinY);
+	for (FBoxLevelInstance& Inst : Instances)
+	{
+		Inst.Cell -= FIntPoint(MinX, MinY);
+	}
 }
 
 void ULevelData::ResizeGrid(int32 NewWidth, int32 NewHeight)
@@ -127,7 +236,7 @@ void ULevelData::Validate(TArray<FLevelValidationIssue>& OutIssues) const
 	}
 	if (Width < MinSize || Width > MaxSize || Height < MinSize || Height > MaxSize)
 	{
-		AddError(TEXT("宽或高越界（5–20）"));
+		AddError(TEXT("宽或高越界（1–20）"));
 	}
 	if (Cells.Num() != Width * Height)
 	{
@@ -197,6 +306,81 @@ void ULevelData::Validate(TArray<FLevelValidationIssue>& OutIssues) const
 			BlockingAt.FindOrAdd(Inst.Cell).Add(Inst.InstanceId);
 		}
 	}
+
+	TSet<FName> FiredNames;
+	TSet<FName> ListenNames;
+	const TSet<FName> LocalSimEvents = { TEXT("Pressed"), TEXT("Released") };
+	for (const FBoxLevelInstance& Inst : Instances)
+	{
+		const UInteractableDef* Def = Inst.LoadDefinition();
+		if (!Def)
+		{
+			continue;
+		}
+		auto CollectActions = [&](const TArray<FInteractableStateActionDef>& Actions, FName StateId, EBoxStateActionPhase Phase)
+		{
+			for (int32 Index = 0; Index < Actions.Num(); ++Index)
+			{
+				const FInteractableStateActionDef& Action = Actions[Index];
+				if (Action.Type != EBoxStateActionType::FireEvent || Action.EventId.IsNone())
+				{
+					continue;
+				}
+				FName EventId = Action.EventId;
+				if (Action.bAllowOverride)
+				{
+					EventId = BoxInstanceParams::ResolveOverriddenName(
+						Inst.ParamOverrides, StateId, BoxInstanceParams::FireEventOverrideKey(Phase, Index), Action.EventId);
+				}
+				if (!EventId.IsNone())
+				{
+					FiredNames.Add(EventId);
+				}
+			}
+		};
+		for (const FInteractableStateDef& State : Def->States)
+		{
+			CollectActions(State.OnEnter, State.StateId, EBoxStateActionPhase::Enter);
+			CollectActions(State.OnStay, State.StateId, EBoxStateActionPhase::Stay);
+			CollectActions(State.OnExit, State.StateId, EBoxStateActionPhase::Exit);
+		}
+		for (int32 Index = 0; Index < Def->Transitions.Num(); ++Index)
+		{
+			const FInteractableTransitionDef& Row = Def->Transitions[Index];
+			if (Row.Condition != EBoxTransitionCondition::OnEvent || Row.EventId.IsNone())
+			{
+				continue;
+			}
+			FName EventId = Row.EventId;
+			if (Row.bAllowOverride)
+			{
+				EventId = BoxInstanceParams::ResolveOverriddenName(
+					Inst.ParamOverrides,
+					BoxInstanceParams::TransitionOverrideComp(),
+					BoxInstanceParams::TransitionOverrideKey(Index),
+					Row.EventId);
+			}
+			if (!EventId.IsNone())
+			{
+				ListenNames.Add(EventId);
+			}
+		}
+	}
+	for (const FName& Name : FiredNames)
+	{
+		if (!ListenNames.Contains(Name))
+		{
+			AddWarn(*FString::Printf(TEXT("事件 %s 有人发，没有转移在听"), *Name.ToString()));
+		}
+	}
+	for (const FName& Name : ListenNames)
+	{
+		if (!FiredNames.Contains(Name) && !LocalSimEvents.Contains(Name))
+		{
+			AddWarn(*FString::Printf(TEXT("事件 %s 有转移在听，本关没有状态发出"), *Name.ToString()));
+		}
+	}
+
 	if (PushableCount != GoalCount || PushableCount < 1)
 	{
 		AddError(*FString::Printf(TEXT("Pushable %d 个，Goal %d 个，胜利条件无法达成"), PushableCount, GoalCount), PushableCells);

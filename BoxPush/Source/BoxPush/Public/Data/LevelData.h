@@ -13,7 +13,7 @@ class BOXPUSH_API ULevelData : public UPrimaryDataAsset
 public:
 	static constexpr int32 MinSize = 1;
 	static constexpr int32 MaxSize = 20;
-	static constexpr int32 DefaultSize = 8;
+	static constexpr int32 DefaultSize = 1;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display", AssetRegistrySearchable)
 	FName LevelId;
@@ -24,17 +24,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Display")
 	FString DesignerNote;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rules", meta = (ClampMin = "1", ClampMax = "20"))
+	/** 由已铺地形、出生点和交互物算出来，不手填。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rules")
 	int32 Width = DefaultSize;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Rules", meta = (ClampMin = "1", ClampMax = "20"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Rules")
 	int32 Height = DefaultSize;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Terrain")
 	TArray<ETerrainCell> Cells;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
-	FIntPoint PlayerSpawn = FIntPoint(2, 3);
+	FIntPoint PlayerSpawn = FIntPoint(0, 0);
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Placement")
 	TArray<FBoxLevelInstance> Instances;
@@ -59,9 +60,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BoxPush|Level")
 	void EnsureCellsSize();
 
-	/** Outer wall, inner floor, 1 player / 1 box / 1 target. */
+	/** 一格地板。宽高随后按内容自己算。 */
 	UFUNCTION(BlueprintCallable, Category = "BoxPush|Level")
 	void ApplyNewLevelDefaults(FName NewLevelId);
+
+	/** 把格子扩到能放下 Cell。新格是空洞。超出单边上限则失败，Cell 不变。成功时 Cell 改成扩完后的坐标。 */
+	bool ExpandTo(FIntPoint& Cell);
+
+	/** 裁掉四周全空、且没有出生点或交互物的边。 */
+	void FitToContent();
 
 	UFUNCTION(BlueprintCallable, Category = "BoxPush|Level")
 	void ResizeGrid(int32 NewWidth, int32 NewHeight);

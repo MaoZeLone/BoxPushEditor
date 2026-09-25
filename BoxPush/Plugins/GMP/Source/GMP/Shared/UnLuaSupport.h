@@ -1,0 +1,1084 @@
+//  Copyright GenericMessagePlugin, Inc. All Rights Reserved.
+
+#pragma once
+#if defined(UNLUA_API)
+#include "GMPCore.h"
+#include "UnLuaDelegates.h"
+#include "UnLuaEx.h"
+#include "UnLuaLib.h"
+#include "XConsoleManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#if defined(GMP_UNLUA_STATIC_BIND) && GMP_UNLUA_STATIC_BIND
+#include "GMPLuaRewrite.h"
+#endif
+
+#if 1
+UnLua::ITypeInterface* CreateTypeInterface(FProperty* InProp)
+{
+	return FPropertyDesc::Create(InProp);
+}
+UnLua::ITypeInterface* CreateTypeInterface(lua_State* L, int32 Idx)
+{
+	auto& Env = UnLua::FLuaEnv::FindEnvChecked(L);
+	return Env.GetPropertyRegistry()->CreateTypeInterface(L, Idx).Get();
+}
+#else
+extern UnLua::ITypeInterface* CreateTypeInterface(FProperty* InProp);
+extern UnLua::ITypeInterface* CreateTypeInterface(lua_State* L, int32 Idx);
+#endif
+
+GMP_EXTERNAL_SIGSOURCE(lua_State)
+
+#define GMP_LOG_UNLUA_INVOKE (!UE_BUILD_SHIPPING)
+#if GMP_LOG_UNLUA_INVOKE
+static bool bLogGMPUnluaExecution = false;
+static FXConsoleVariableRef CVar_DrawAbilityVisualizer(TEXT("GMP.LogGMPUnluaExecution"), bLogGMPUnluaExecution, TEXT("log each unlua gmp exectuion"), ECVF_Default);
+#endif
+
+#if GMP_TRACE_SCRIPT_SRC
+// Walk up the Lua call stack skipping frames inside the GMP.lua API wrapper, returning the first business-code caller as "short_src:line". Falls back to level 1 if none found.
+static FString GMP_ResolveScriptCallerLoc(lua_State* L)
+{
+	alignas(lua_Debug) uint8 Backing[4096];
+	lua_Debug* Ar = reinterpret_cast<lua_Debug*>(Backing);
+
+	FString FirstLoc;
+	for (int32 Level = 1; Level <= 16; ++Level)
+	{
+		if (!lua_getstack(L, Level, Ar) || !lua_getinfo(L, "Sl", Ar))
+		{
+			break;
+		}
+		const FString Loc = FString::Printf(TEXT("%hs:%d"), Ar->short_src, Ar->currentline);
+		if (FirstLoc.IsEmpty())
+		{
+			FirstLoc = Loc;
+		}
+		if (Ar->source && !FCStringAnsi::Strstr(Ar->source, "GMP.lua"))
+		{
+			return Loc;
+		}
+	}
+	return FirstLoc;
+}
+#endif
+
+enum GMP_Unlua_Listen_Index : int32
+{
+	WatchedObj = 1,
+	MessageKey,
+	WeakObject,
+	Function,
+	Times,
+};
+struct FLubCb
+{
+	int32 FuncRef = INT_MAX;
+	int32 ObjRef = INT_MAX;
+	FLubCb(int32 In, int32 Obj = INT_MAX)
+		: FuncRef(In)
+		, ObjRef(Obj)
+	{
+	}
+	FLubCb(const FLubCb&) = delete;
+	FLubCb& operator=(const FLubCb&) = delete;
+	FLubCb(FLubCb&& Cb)
+	{
+		FuncRef = Cb.FuncRef;
+		ObjRef = Cb.ObjRef;
+		Cb.FuncRef = INT_MAX;
+		Cb.ObjRef = INT_MAX;
+	}
+	~FLubCb()
+	{
+		lua_State* L = UnLua::GetState();
+		if (L) {
+			if (FuncRef != INT_MAX)
+				luaL_unref(L, LUA_REGISTRYINDEX, FuncRef);
+			if (ObjRef != INT_MAX)
+				luaL_unref(L, LUA_REGISTRYINDEX, ObjRef);
+		}
+	}
+};
+
+// bSkipSigCheck: a row handler's (int32 Row, <element>) shape is fixed by GMP, never matching the tag signature.
+inline void GMP_Unlua_InvokeListenCallback(const FGMPTypedAddr* Paddrs, int32 NumArgs, FName KeyName, const FName* InRawTypeNames, const TArray<FName>* InMetaTypes, const FLubCb& LubCb, UObject* WatchedObject, UObject* WeakObj, int lua_obj, bool bSkipSigCheck = false)
+{
+	lua_State* L = UnLua::GetState();
+	if (!ensure(L))
+	{
+		GMP_ERROR(TEXT("[GMPUnlua] unable to get lua state: %s"), *KeyName.ToString());
+		return;
+	}
+
+	bool bSucc = true;
+	TArray<UnLua::ITypeInterface*, TInlineAllocator<8>> Incs;
+
+	auto GetTypeName = [&](int32 Idx) -> FName {
+#if GMP_WITH_TYPENAME
+		(void)InRawTypeNames;
+		(void)InMetaTypes;
+		return Paddrs[Idx].TypeName;
+#else
+		if (InMetaTypes && InMetaTypes->IsValidIndex(Idx))
+			return (*InMetaTypes)[Idx];
+		return InRawTypeNames ? InRawTypeNames[Idx] : NAME_None;
+#endif
+	};
+
+	for (auto i = 0; i < NumArgs; ++i)
+	{
+		FProperty* Prop = nullptr;
+		if (GMPReflection::PropertyFromString(GetTypeName(i).ToString(), Prop) && Prop)
+		{
+			using namespace UnLua;
+			if (auto Inc = CreateTypeInterface(Prop))
+			{
+				Incs.Add(Inc);
+				continue;
+			}
+		}
+
+		GMP_ERROR(TEXT("[GMPUnlua] cannot get property from [%s]"), *GetTypeName(i).ToString());
+		bSucc = false;
+		break;
+	}
+
+	lua_settop(L, 0);
+	if (bSucc)
+	{
+		lua_pushcfunction(L, UnLua::ReportLuaCallError);
+		const int32 errfunc = lua_gettop(L);
+		lua_rawgeti(L, LUA_REGISTRYINDEX, LubCb.FuncRef);
+		if (!lua_isfunction(L, -1))
+		{
+			return;
+		}
+
+		bool bSelfFilled = false;
+		if (WeakObj)
+		{
+			UnLua::PushUObject(L, WeakObj);
+			bSelfFilled = true;
+		}
+		else if (lua_obj != INT_MAX)
+		{
+			lua_rawgeti(L, LUA_REGISTRYINDEX, LubCb.ObjRef);
+			bSelfFilled = true;
+		}
+		else
+		{
+			ensure(false);
+		}
+
+		for (auto i = 0; i < NumArgs; ++i)
+		{
+			auto& Inc = Incs[i];
+#if 1
+			auto IncProp = CastField<FNumericProperty>(Inc->GetUProperty());
+			if (IncProp && IncProp->IsInteger())
+			{
+				auto IntVal = IncProp->GetUnsignedIntPropertyValue(Paddrs[i].ToAddr());
+				Inc->Read(L, &IntVal, true);
+			}
+			else if (auto EnumProp = CastField<FEnumProperty>(Inc->GetUProperty()))
+			{
+				uint8 Val = *(uint8*)Paddrs[i].ToAddr();
+				lua_pushinteger(L, Val);
+			}
+			else
+#endif
+			{
+				Inc->Read(L, Paddrs[i].ToAddr(), true);
+			}
+		}
+
+#if GMP_WITH_DYNAMIC_CALL_CHECK
+		{
+			GMP::FArrayTypeNames ArgNames;
+			ArgNames.Reserve(NumArgs);
+			for (auto i = 0; i < NumArgs; ++i)
+				ArgNames.Add(GetTypeName(i));
+			const GMP::FArrayTypeNames* OldParams = nullptr;
+			GMP::FMessageHub::FTagTypeSetter SetMsgTagType(TEXT("Unlua"));
+			if (!bSkipSigCheck && !GMP::FMessageHub::IsSignatureCompatible(false, KeyName, ArgNames, OldParams))
+			{
+				GMP_WARNING(TEXT("[GMPUnlua] SignatureMismatch On Lua Listen %s"), *KeyName.ToString());
+				bSucc = false;
+			}
+		}
+#endif
+#if GMP_LOG_UNLUA_INVOKE
+		GMP_CLOG(bLogGMPUnluaExecution, TEXT("[GMPUnlua] Execute %s"), *GetNameSafe(WeakObj));
+#endif
+		ensureAlways(bSucc && (lua_pcall(L, NumArgs + (bSelfFilled ? 1 : 0), 0, errfunc) == LUA_OK));
+		lua_remove(L, errfunc);
+	}
+}
+
+// lua_function ListenObjectMessage(watchedobj, msgkey, tableobj, tablefuncstr   [,times]) // recommended for member function
+// lua_function ListenObjectMessage(watchedobj, msgkey, nil,      globalfunction [,times]) // recommended for global function
+// lua_function ListenObjectMessage(watchedobj, msgkey, weakobj,  globalfuncstr  [,times])
+// lua_function ListenObjectMessage(watchedobj, msgkey, weakobj,  memberfunction [,times])
+inline int Lua_ListenObjectMessage(lua_State* L)
+{
+	lua_Number RetNum{};
+	do
+	{
+#if WITH_EDITOR
+		if (!ensureAlways(lua_gettop(L) <= GMP_Unlua_Listen_Index::Times))
+			break;
+#endif
+		int luaCurType = LUA_TNONE;
+		int32 LeftTimes = -1;
+		if (lua_gettop(L) == GMP_Unlua_Listen_Index::Times)
+		{
+#if WITH_EDITOR
+			luaCurType = lua_type(L, GMP_Unlua_Listen_Index::Times);
+			if (!ensureAlways(luaCurType == LUA_TNUMBER))
+				break;
+#endif
+			LeftTimes = UnLua::Get(L, GMP_Unlua_Listen_Index::Times, UnLua::TType<int32>{});
+			if (!ensureAlways(LeftTimes != 0))
+			{
+				GMP_WARNING(TEXT("[GMPUnlua] leftTimes zero, parameter error?"));
+			}
+			lua_pop(L, 1);
+		}
+		else if (!ensure(lua_gettop(L) == GMP_Unlua_Listen_Index::Function))
+		{
+			GMP_ERROR(TEXT("[GMPUnlua] Parameter Count Error"));
+			break;
+		}
+		// should be string or function type
+		auto OrignalFuncType = lua_type(L, GMP_Unlua_Listen_Index::Function);
+		if (!ensure(OrignalFuncType == LUA_TSTRING || OrignalFuncType == LUA_TFUNCTION))
+		{
+			GMP_ERROR(TEXT("[GMPUnlua] Parameter Type Error"));
+			break;
+		}
+
+		UObject* WatchedObject = UnLua::GetUObject(L, GMP_Unlua_Listen_Index::WatchedObj);
+		FName MsgKey = GMP::ToMessageKey(UnLua::Get(L, GMP_Unlua_Listen_Index::MessageKey, UnLua::TType<const char*>{}));
+		UObject* WeakObj = UnLua::GetUObject(L, GMP_Unlua_Listen_Index::WeakObject);
+		int lua_obj = INT_MAX;
+		if (!WeakObj && lua_type(L, GMP_Unlua_Listen_Index::WeakObject) == LUA_TTABLE)
+		{
+			lua_pushvalue(L, GMP_Unlua_Listen_Index::WeakObject);
+			lua_obj = luaL_ref(L, LUA_REGISTRYINDEX);	
+		}
+		ensure(WeakObj || (lua_obj != INT_MAX));
+		if (OrignalFuncType == LUA_TSTRING)
+		{
+			auto Str = lua_tostring(L, GMP_Unlua_Listen_Index::Function);
+			lua_pop(L, 1);
+			if (lua_istable(L, GMP_Unlua_Listen_Index::WeakObject))
+			{
+				// member function
+				lua_getfield(L, GMP_Unlua_Listen_Index::WeakObject, Str);
+				ensure(lua_isfunction(L, GMP_Unlua_Listen_Index::Function));
+			}
+
+			if (!lua_isfunction(L, GMP_Unlua_Listen_Index::Function))
+			{
+				// global function
+				lua_getglobal(L, Str);
+				lua_replace(L, GMP_Unlua_Listen_Index::Function);
+			}
+		}
+		else if (WeakObj)
+		{
+#if WITH_EDITOR || UE_BUILD_DEVELOPMENT || UE_BUILD_DEBUG
+			// slow verify member function in table
+			int32 TopIdx = lua_gettop(L);
+			lua_pushnil(L);
+			while (lua_next(L, GMP_Unlua_Listen_Index::WeakObject))
+			{
+				if (lua_rawequal(L, -1, GMP_Unlua_Listen_Index::Function))
+				{
+					lua_pop(L, lua_gettop(L) - TopIdx);
+					break;
+				}
+				lua_pop(L, 1);
+			}
+			GMP_CHECK(lua_gettop(L) == TopIdx);
+			if (!ensureAlwaysMsgf(WeakObj, TEXT("[GMPUnlua] must use member function if weakObj exist or using nil for global function")))
+			{
+				break;
+			}
+#endif
+		}
+
+#if WITH_EDITOR
+		luaCurType = lua_type(L, GMP_Unlua_Listen_Index::WatchedObj);
+		if (!ensureAlways(luaCurType == LUA_TTABLE || luaCurType == LUA_TNIL || luaCurType == LUA_TUSERDATA))
+			break;
+		luaCurType = lua_type(L, GMP_Unlua_Listen_Index::MessageKey);
+		if (!ensureAlways(luaCurType == LUA_TSTRING || luaCurType == LUA_TUSERDATA))
+			break;
+		luaCurType = lua_type(L, GMP_Unlua_Listen_Index::WeakObject);
+		if (!ensureAlways(luaCurType == LUA_TTABLE || luaCurType == LUA_TNIL || luaCurType == LUA_TUSERDATA))
+			break;
+#endif
+		if (!ensure(lua_gettop(L) == GMP_Unlua_Listen_Index::Function && lua_isfunction(L, GMP_Unlua_Listen_Index::Function)))
+		{
+			GMP_ERROR(TEXT("[GMPUnlua] Parameter fuction Error"));
+			break;
+		}
+
+		int lua_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+#if GMP_TRACE_SCRIPT_SRC
+		{
+			const FString Loc = GMP_ResolveScriptCallerLoc(L);
+			if (!Loc.IsEmpty())
+			{
+				GMP::TraceScriptMessageSource(MsgKey, Loc, /*bIsListen*/ true);
+			}
+		}
+#endif
+
+#if GMP_WITH_DIRECT_SIGNAL
+		uint64 RetKey = FGMPHelper::ScriptListenMessageRaw(
+			WatchedObject ? FGMPSigSource(WatchedObject) : FGMPSigSource(L),
+			MsgKey,
+			WeakObj,
+			[LubCb{FLubCb(lua_cb, lua_obj)}, WatchedObject, lua_obj, WeakObj](const FGMPTypedAddr* paddrs, const GMP::FGMPExtra* extra) {
+				GMP_Unlua_InvokeListenCallback(paddrs, extra->Size, extra->Key, extra->TypeNames, nullptr, LubCb, WatchedObject, WeakObj, lua_obj);
+			},
+			LeftTimes);
+#else
+		uint64 RetKey = FGMPHelper::ScriptListenMessage(
+			WatchedObject ? FGMPSigSource(WatchedObject) : FGMPSigSource(L),
+			MsgKey,
+			WeakObj,
+			[LubCb{FLubCb(lua_cb, lua_obj)}, WatchedObject, lua_obj, WeakObj](GMP::FMessageBody& Body) {
+				const auto Addrs = Body.GetParams();  // TArrayView by value (inline trailing block)
+				GMP_Unlua_InvokeListenCallback(Addrs.GetData(), Addrs.Num(), Body.MessageKey(), nullptr, Body.GetMessageTypes(WatchedObject), LubCb, WatchedObject, WeakObj, lua_obj);
+			},
+			LeftTimes);
+#endif
+		static_assert(sizeof(RetKey) == sizeof(RetNum), "err");
+		FMemory::Memcpy(&RetNum, &RetKey, sizeof(RetNum));
+	} while (false);
+	lua_settop(L, 0);
+	lua_pushnumber(L, RetNum);
+	return 0;
+}
+
+// lua_function UnbindObjectMessage(msgkey, ListenedObj)
+// lua_function UnbindObjectMessage(msgkey, Key)
+// lua_function UnbindObjectMessage(msgkey, ListenedObj, Key)
+// lua_function ListenRowMessage(watchedobj, msgkey, weakobj, index, function(row, item) [,times])
+// index: >=0 that row, <0 row ~index with removal notices, GMP::AllRows every row; a removed row arrives negative.
+inline int Lua_ListenRowMessage(lua_State* L)
+{
+	lua_Number RetNum{};
+	do
+	{
+		const int32 Top = lua_gettop(L);
+		if (!ensure(Top >= 5 && lua_isfunction(L, 5)))
+			break;
+
+		UObject* WatchedObject = UnLua::GetUObject(L, 1);
+		const FName MsgKey = UTF8_TO_TCHAR(lua_tostring(L, 2));
+		UObject* WeakObj = UnLua::GetUObject(L, 3);
+		const int32 Index = UnLua::Get(L, 4, UnLua::TType<int32>{});
+		const int32 LeftTimes = Top >= 6 ? UnLua::Get(L, 6, UnLua::TType<int32>{}) : -1;
+		if (!ensure(!MsgKey.IsNone()))
+			break;
+
+		lua_pushvalue(L, 5);
+		const int lua_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+		const auto SigSrc = WatchedObject ? FGMPSigSource(WatchedObject) : FGMPSigSource(L);
+
+		const FGMPKey Key = GMP::GMPListenScriptRows(SigSrc, MsgKey, WeakObj, Index, [LubCb{MakeShared<FLubCb>(lua_cb)}, WatchedObject, WeakObj, MsgKey](const FGMPTypedAddr* Addrs, int32 Num, const UScriptStruct*) {
+			GMP_Unlua_InvokeListenCallback(Addrs, Num, MsgKey, nullptr, nullptr, *LubCb, WatchedObject, WeakObj, INT_MAX, /*bSkipSigCheck*/ true);
+		}, LeftTimes);
+		RetNum = (lua_Number)(uint64)Key;
+	} while (false);
+	lua_pushnumber(L, RetNum);
+	return 1;
+}
+
+inline int Lua_UnbindObjectMessage(lua_State* L)
+{
+	int32 NumArgs = lua_gettop(L);
+	do
+	{
+		if (!ensure(NumArgs >= 2))
+			break;
+		FName MsgKey = GMP::ToMessageKey(UnLua::Get(L, 1, UnLua::TType<const char*>{}));
+		UObject* ListenedObj = UnLua::GetUObject(L, 2);
+		lua_Number LuaNum = lua_tonumber(L, NumArgs >= 3 ? 3 : 2);
+		uint64 Key = 0;
+		FMemory::Memcpy(&Key, &LuaNum, sizeof(LuaNum));
+
+#if WITH_EDITOR
+		int luaCurType = LUA_TNONE;
+		luaCurType = lua_type(L, 1);
+		if (!ensureAlways(luaCurType == LUA_TSTRING || luaCurType == LUA_TUSERDATA))
+			break;
+		luaCurType = lua_type(L, 2);
+		if (!ensureAlways(luaCurType == LUA_TNUMBER || luaCurType == LUA_TTABLE || luaCurType == LUA_TUSERDATA))
+			break;
+#endif
+
+		if (ListenedObj)
+			FGMPHelper::ScriptUnbindMessage(MsgKey, ListenedObj);
+		else
+			FGMPHelper::ScriptUnbindMessage(MsgKey, Key);
+
+	} while (false);
+
+	lua_settop(L, 0);
+	return 0;
+}
+inline int Lua_UnListenObjectMessage(lua_State* L)
+{
+	return Lua_UnbindObjectMessage(L);
+}
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4750)  // warning C4750: function with _alloca() inlined into a loop
+#endif
+
+// lua_function NotifyObjectMessage(obj, msgkey, parameters...)
+inline int Lua_NotifyObjectMessage(lua_State* L)
+{
+	int32 NumArgs = lua_gettop(L);
+	do
+	{
+		if (!ensure(NumArgs >= 2))
+		{
+			GMP_ERROR(TEXT("[GMPUnlua] Notify Parameter Count Err"));
+			break;
+		}
+		UObject* Sender = UnLua::GetUObject(L, 1);
+		FName MsgKey = GMP::ToMessageKey(UnLua::Get(L, 2, UnLua::TType<const char*>{}));
+#if GMP_TRACE_SCRIPT_SRC
+		{
+			const FString Loc = GMP_ResolveScriptCallerLoc(L);
+			if (!Loc.IsEmpty())
+			{
+				GMP::TraceScriptMessageSource(MsgKey, Loc, /*bIsListen*/ false);
+			}
+		}
+#endif
+
+#if WITH_EDITOR
+		int luaCurType = LUA_TNONE;
+		luaCurType = lua_type(L, 1);
+		if (!ensureAlways(luaCurType == LUA_TTABLE || luaCurType == LUA_TUSERDATA))
+			break;
+		luaCurType = lua_type(L, 2);
+		if (!ensureAlways(luaCurType == LUA_TSTRING || luaCurType == LUA_TUSERDATA))
+			break;
+#endif
+
+		FGMPPropStackHolderArray PropHolders;
+		PropHolders.Reserve(NumArgs);
+
+		bool bSucc = true;
+		for (auto i = 3; i <= NumArgs; ++i)
+		{
+			using namespace UnLua;
+			auto Inc = CreateTypeInterface(L, i);
+			FProperty* Prop = Inc ? Inc->GetUProperty() : nullptr;
+			if (!Inc || !Prop)
+			{
+				bSucc = false;
+				GMP_ERROR(TEXT("[GMPUnlua] Failed to get Property"));
+				break;
+			}
+			auto& Holder = PropHolders.Emplace_GetRef(Prop, FMemory_Alloca_Aligned(Prop->GetElementSize(), Prop->GetMinAlignment()));
+			Inc->Write(L, Holder.GetAddr(), i);
+		}
+
+#if GMP_WITH_DYNAMIC_TYPE_CHECK
+		if (auto Types = GMP::FMessageBody::GetMessageTypes(Sender, MsgKey))
+		{
+			const int32 CheckNum = FMath::Min(PropHolders.Num(), Types->Num());
+			for (auto i = 0; i < CheckNum; ++i)
+			{
+				if (!GMPReflection::EqualPropertyName(PropHolders[i].Prop, (*Types)[i], false))
+				{
+					GMP_ERROR(TEXT("[GMPUnlua] SignatureMismatch On Lua Notify %s"), *MsgKey.ToString());
+					bSucc = false;
+					break;
+				}
+			}
+		}
+#if WITH_EDITOR
+		else
+		{
+		}
+#endif
+#endif
+
+		if (bSucc)
+		{
+			GMP::FMessageHub::FTagTypeSetter SetMsgTagType(TEXT("Unlua"));
+			GMP::FTypedAddresses Params;
+			Params.Reserve(NumArgs);
+			FGMPHelper::ScriptNotifyMessage(MsgKey, FGMPTypedAddr::FromHolderArray(Params, PropHolders), Sender);
+		}
+	} while (false);
+	lua_settop(L, 0);
+	return 0;
+}
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
+// Self:ListenWorldMessage(msgkey, func, times)
+// Self:ListenObjectMessage(Obj, msgkey, func, times)
+inline auto Obj_ListenObjectMessage(lua_State* L) -> int
+{
+#if !UE_BUILD_SHIPPING
+	luaL_checktype(L, 1, LUA_TTABLE);  // self
+#endif
+	UObject* Obj = nullptr;
+	if (lua_type(L, 2) != LUA_TSTRING)
+	{
+		if (!(lua_type(L, 2) == LUA_TTABLE || lua_type(L, 2) == LUA_TNIL))
+			return luaL_error(L, "[GMPUnlua] first parameter should be object or nil");
+		Obj = UnLua::GetUObject(L, 2, false);
+		lua_remove(L, 2);
+#if !UE_BUILD_SHIPPING
+		luaL_checktype(L, 2, LUA_TSTRING);  // string
+#endif
+	}
+	lua_rotate(L, 1, -1);
+	lua_insert(L, 2);
+
+	auto nargs = lua_gettop(L);
+#if !UE_BUILD_SHIPPING
+	if (nargs < 3)
+		return luaL_error(L, "[GMPUnlua] too few parameter");
+#endif
+
+	int times = nargs >= 4 ? luaL_checkinteger(L, 4) : -1;
+	ensure(times != 0);
+	lua_settop(L, 3);
+
+	auto Self = UnLua::GetUObject(L, 2, false);
+	auto FuncType = lua_type(L, 3);
+	if (FuncType == LUA_TSTRING)
+	{
+		auto Str = lua_tostring(L, 3);
+		lua_pop(L, 1);
+		lua_getfield(L, 2, Str);
+		if (!ensure(lua_isfunction(L, 3)))
+			return luaL_error(L, "[GMPUnlua] should be member function %s", Str);
+	}
+	else if (FuncType == LUA_TFUNCTION)
+	{
+#if WITH_EDITOR
+		bool bIsMemberFunc = false;
+		int32 TopIdx = lua_gettop(L);
+		lua_pushnil(L);
+		while (lua_next(L, 2))
+		{
+			if (lua_rawequal(L, -1, 3))
+			{
+				lua_pop(L, lua_gettop(L) - TopIdx);
+				bIsMemberFunc = true;
+				break;
+			}
+			lua_pop(L, 1);
+		}
+		GMP_CHECK(lua_gettop(L) == TopIdx);
+		if (!ensure(bIsMemberFunc))
+			return luaL_error(L, "[GMPUnlua] should be member function");
+#endif
+	}
+	else
+	{
+		return luaL_error(L, "[GMPUnlua] Invalid function type");
+	}
+
+	Obj = Obj ? Obj : Self->GetWorld();
+	UnLua::PushUObject(L, Obj);
+	lua_insert(L, 1);
+	lua_pushinteger(L, times);
+
+#if UE_BUILD_SHIPPING
+	return Lua_ListenObjectMessage(L);
+#else
+	lua_pushcfunction(L, Lua_ListenObjectMessage);
+	lua_insert(L, 1);
+	if (lua_pcall(L, 5, 1, 0) != LUA_OK)
+	{
+		return luaL_error(L, "[GMPUnlua] Failed to call ListenObjectMessage: %s", lua_tostring(L, -1));
+	}
+	return 1;
+#endif
+}
+
+// Self:UnbindObjectMessage(msgkey, ListenedObj, Key or 0)
+// Self:UnbindObjectMessage(msgkey, Key)
+inline auto Obj_UnbindObjectMessage(lua_State* L) -> int
+{
+	auto nargs = lua_gettop(L);
+#if !UE_BUILD_SHIPPING
+	if (nargs < 3)
+		return luaL_error(L, "[GMPUnlua] too few parameter");
+#endif
+
+#if !UE_BUILD_SHIPPING
+	luaL_checktype(L, 1, LUA_TTABLE);
+	luaL_checktype(L, 2, LUA_TSTRING);
+#endif
+	lua_rotate(L, 1, 1);
+
+#if UE_BUILD_SHIPPING
+	return Lua_UnbindObjectMessage(L);
+#else
+	lua_pushcfunction(L, Lua_UnbindObjectMessage);
+	lua_insert(L, 1);
+	if (lua_pcall(L, nargs, 0, 0) != LUA_OK)
+	{
+		return luaL_error(L, "[GMPUnlua] Failed to call UnbindObjectMessage: %s", lua_tostring(L, -1));
+	}
+	return 0;
+#endif
+}
+
+// Self:NotifyObjectMessage(msgkey, ...)
+inline auto Obj_NotifyObjectMessage(lua_State* L) -> int
+{
+#if !UE_BUILD_SHIPPING
+	luaL_checktype(L, 1, LUA_TTABLE);
+	luaL_checktype(L, 2, LUA_TSTRING);
+#endif
+#if UE_BUILD_SHIPPING
+	return Lua_NotifyObjectMessage(L);
+#else
+	int nargs = lua_gettop(L);
+	// call Lua_NotifyObjectMessage(msgkey, self, ...)
+	lua_pushcfunction(L, Lua_NotifyObjectMessage);
+	lua_insert(L, 1);
+	if (lua_pcall(L, nargs, 0, 0) != 0)
+	{
+		return luaL_error(L, "[GMPUnlua] Failed to call NotifyObjectMessage: %s", lua_tostring(L, -1));
+	}
+
+	return 0;
+#endif
+}
+
+// lua_function MixinObject(obj)
+inline int GMP_MixinObject(lua_State* L)
+{
+	do
+	{
+		luaL_checktype(L, 1, LUA_TTABLE);
+		lua_pushvalue(L, 1);
+
+		lua_pushstring(L, "ListenObjectMessage");
+		lua_pushcfunction(L, Obj_ListenObjectMessage);
+		lua_settable(L, -3);
+
+		lua_pushstring(L, "ListenWorldMessage");
+		lua_pushcfunction(L, Obj_ListenObjectMessage);
+		lua_settable(L, -3);
+
+		lua_pushstring(L, "NotifyObjectMessage");
+		lua_pushcfunction(L, Obj_NotifyObjectMessage);
+		lua_settable(L, -3);
+
+		lua_pushstring(L, "UnbindObjectMessage");
+		lua_pushcfunction(L, Obj_UnbindObjectMessage);
+		lua_settable(L, -3);
+	} while (false);
+	return 1;
+}
+
+inline int GMP_MixinMeta(lua_State* L)
+{
+	luaL_checktype(L, 1, LUA_TTABLE);
+
+	const char* MIXIN_TABLE_KEY = "GMPMixinTable";
+	lua_pushstring(L, MIXIN_TABLE_KEY);
+	lua_gettable(L, LUA_REGISTRYINDEX);
+
+	if (lua_isnil(L, -1))
+	{
+		lua_pop(L, 1);
+		lua_newtable(L);
+
+		lua_pushstring(L, "ListenObjectMessage");
+		lua_pushcfunction(L, Obj_ListenObjectMessage);
+		lua_settable(L, -3);
+
+		lua_pushstring(L, "ListenWorldMessage");
+		lua_pushcfunction(L, Obj_ListenObjectMessage);
+		lua_settable(L, -3);
+
+		lua_pushstring(L, "NotifyObjectMessage");
+		lua_pushcfunction(L, Obj_NotifyObjectMessage);
+		lua_settable(L, -3);
+
+		lua_pushstring(L, "UnbindObjectMessage");
+		lua_pushcfunction(L, Obj_UnbindObjectMessage);
+		lua_settable(L, -3);
+
+		lua_pushstring(L, MIXIN_TABLE_KEY);
+		lua_pushvalue(L, -2);
+		lua_settable(L, LUA_REGISTRYINDEX);
+	}
+
+	if (!lua_getmetatable(L, 1))
+	{
+		lua_newtable(L);
+	}
+
+	int mt_idx = lua_gettop(L);
+	lua_newtable(L);
+	lua_pushstring(L, "__index");
+
+	lua_pushvalue(L, -3);
+	lua_pushvalue(L, mt_idx);
+
+	auto CClosure = [](lua_State* L) -> int {
+		lua_pushvalue(L, 2);
+		lua_gettable(L, 1);
+		if (!lua_isnil(L, -1))
+		{
+			return 1;
+		}
+		lua_pop(L, 1);
+
+		lua_pushvalue(L, 2);
+		lua_gettable(L, lua_upvalueindex(1));
+		if (!lua_isnil(L, -1))
+		{
+			return 1;
+		}
+		lua_pop(L, 1);
+
+		lua_pushvalue(L, lua_upvalueindex(2));
+		lua_pushstring(L, "__index");
+		lua_gettable(L, -2);
+
+		if (lua_isnil(L, -1))
+		{
+			return 1;
+		}
+		else if (lua_istable(L, -1))
+		{
+			lua_pushvalue(L, 2);
+			lua_gettable(L, -2);
+			return 1;
+		}
+		else if (lua_isfunction(L, -1))
+		{
+			lua_pushvalue(L, 1);
+			lua_pushvalue(L, 2);
+			lua_call(L, 2, 1);
+			return 1;
+		}
+		lua_pushnil(L);
+		return 1;
+	};
+	lua_pushcclosure(L, CClosure, 2);
+
+	lua_settable(L, -3);
+	lua_setmetatable(L, 1);
+	lua_pop(L, 2);
+	lua_pushvalue(L, 1);
+	return 1;
+}
+
+inline void GMP_UnregisterToLua(lua_State* L)
+{
+	if (ensure(L))
+	{
+		FGMPSigSource::RemoveSource(L);
+	}
+}
+
+inline void GMP_AutoMixin()
+{
+	static FDelegateHandle Handle;
+	if (Handle.IsValid())
+		return;
+	Handle = FUnLuaDelegates::OnObjectBinded.AddLambda([](UObjectBaseUtility* Obj) {
+		if (!Obj || Obj->IsA<UClass>())
+			return;
+		GMP_TRACE(TEXT("[GMPUnlua] GMP_AutoMixin for %s"), *Obj->GetName());
+
+		lua_State* L = UnLua::GetState();
+		luaL_checktype(L, -1, LUA_TTABLE);
+
+		lua_pushstring(L, "ListenObjectMessage");
+		lua_pushcfunction(L, Obj_ListenObjectMessage);
+		lua_rawset(L, -3);
+
+		lua_pushstring(L, "ListenWorldMessage");
+		lua_pushcfunction(L, Obj_ListenObjectMessage);
+		lua_rawset(L, -3);
+
+		lua_pushstring(L, "NotifyObjectMessage");
+		lua_pushcfunction(L, Obj_NotifyObjectMessage);
+		lua_rawset(L, -3);
+
+		lua_pushstring(L, "UnbindObjectMessage");
+		lua_pushcfunction(L, Obj_UnbindObjectMessage);
+		lua_rawset(L, -3);
+	});
+}
+
+#if defined(GMP_UNLUA_STATIC_BIND) && GMP_UNLUA_STATIC_BIND
+namespace UnLuaGMPStaticBind { void GMP_RegisterStaticBinds(lua_State* L); }  // defined in generated GMPUnLuaBinds.gen.cpp
+#endif
+
+inline void GMP_RegisterToLua(lua_State* L)
+{
+	GMP_AutoMixin();
+	if (ensure(L))
+	{
+#if 1
+#define LUA_REG_GMP_FUNC(NAME) lua_register(L, #NAME, Lua_##NAME);
+#else
+#define LUA_REG_GMP_FUNC(NAME)        \
+	lua_pushstring(L, #NAME);         \
+	lua_pushcfunction(L, Lua_##NAME); \
+	lua_rawset(L, -3);
+#endif
+		LUA_REG_GMP_FUNC(NotifyObjectMessage);
+		LUA_REG_GMP_FUNC(ListenObjectMessage);
+		LUA_REG_GMP_FUNC(ListenRowMessage);
+		LUA_REG_GMP_FUNC(UnbindObjectMessage);
+		LUA_REG_GMP_FUNC(UnListenObjectMessage);
+#if defined(GMP_UNLUA_STATIC_BIND) && GMP_UNLUA_STATIC_BIND
+		UnLuaGMPStaticBind::GMP_RegisterStaticBinds(L);  // per-tag strongly-typed Notify_<id> from generated GMPUnLuaBinds.gen.cpp
+#endif
+	}
+}
+
+#if 1  // via ExportFunction
+inline void GMP_ExportToLuaEx()
+{
+	struct FExportedGMPFunction : public UnLua::IExportedFunction
+	{
+		FExportedGMPFunction()
+		{
+			GMP_LOG(TEXT("[GMPUnlua] ExportGMP"));
+			UnLua::ExportFunction(this);
+			FUnLuaDelegates::OnPreLuaContextCleanup.AddLambda([](bool) {
+				if (lua_State* L = UnLua::GetState())
+					GMP_UnregisterToLua(L);
+			});
+#if defined(GMP_UNLUA_STATIC_BIND) && GMP_UNLUA_STATIC_BIND
+			if (!FUnLuaDelegates::CustomLoadLuaFile.IsBound())
+			{
+				FUnLuaDelegates::CustomLoadLuaFile.BindLambda([](UnLua::FLuaEnv& Env, const FString& InName, TArray<uint8>& Data, FString& ChunkName) -> bool {
+					FString Rel = InName;
+					Rel.ReplaceInline(TEXT("."), TEXT("/"));
+					const FString PackagePath = UnLua::UnLuaLib::GetPackagePath(Env.GetMainState());
+					TArray<FString> Patterns;
+					if (PackagePath.ParseIntoArray(Patterns, TEXT(";"), false) == 0)
+						return false;
+					FString Raw;
+					for (FString Pattern : Patterns)
+					{
+						Pattern.ReplaceInline(TEXT("?"), *Rel);
+						for (const FString& Base : {FPaths::ProjectPersistentDownloadDir(), FPaths::ProjectDir()})
+						{
+							const FString Full = FPaths::ConvertRelativePathToFull(FPaths::Combine(Base, Pattern));
+							if (FFileHelper::LoadFileToString(Raw, *Full))
+							{
+								ChunkName = Full;
+								const FString Rewritten = GMPLuaRewrite::Rewrite(Raw);
+								FTCHARToUTF8 Utf8(*Rewritten);
+								Data.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+								return true;
+							}
+						}
+					}
+					return false;
+				});
+			}
+#endif
+		}
+
+		virtual void Register(lua_State* L) override { GMP_RegisterToLua(L); }
+		virtual int32 Invoke(lua_State* L) override { return 0; }
+
+#if WITH_EDITOR
+		virtual FString GetName() const override { return TEXT("GMP"); }
+		virtual void GenerateIntelliSense(FString& Buffer) const override {}
+#endif
+	};
+	static FExportedGMPFunction ExportedGMPFunction;
+}
+
+#elif 0  // via Delegates in LuaEnv
+inline void GMP_ExportToLuaEx()
+{
+	GMP_LOG(TEXT("[GMPUnlua] ExportGMP"));
+	if (lua_State* L = UnLua::GetState())
+	{
+		GMP_RegisterToLua(L);
+	}
+	else
+	{
+		UnLua::FLuaEnv::OnCreated.AddStatic([](UnLua::FLuaEnv& LuaEnv) {
+			LuaEnv.AddBuiltInLoader(TEXT("NotifyObjectMessage"), Lua_NotifyObjectMessage);
+			LuaEnv.AddBuiltInLoader(TEXT("ListenObjectMessage"), Lua_ListenObjectMessage);
+			LuaEnv.AddBuiltInLoader(TEXT("UnbindObjectMessage"), Lua_UnbindObjectMessage);
+			LuaEnv.AddBuiltInLoader(TEXT("UnListenObjectMessage"), Lua_UnListenObjectMessage);
+		});
+	}
+
+	UnLua::FLuaEnv::OnDestroyed.AddStatic([](UnLua::FLuaEnv& LuaEnv) { GMP_UnregisterToLua(LuaEnv.GetMainState()); });
+}
+
+#else  // via FUnLuaDelegates Callbacks
+inline void GMP_ExportToLuaEx()
+{
+	GMP_LOG(TEXT("[GMPUnlua] ExportGMP"));
+	if (lua_State* L = UnLua::GetState())
+	{
+		GMP_RegisterToLua(L);
+	}
+	else
+	{
+		FUnLuaDelegates::OnLuaStateCreated.AddLambda([](lua_State* InL) {
+			if (ensure(InL))
+				GMP_RegisterToLua(InL);
+			else if (lua_State* L = UnLua::GetState())
+				GMP_RegisterToLua(L);
+		});
+	}
+
+	FUnLuaDelegates::OnPreLuaContextCleanup.AddLambda([](bool) {
+		if (lua_State* L = UnLua::GetState())
+			GMP_UnregisterToLua(L);
+	});
+}
+#endif
+
+struct GMP_ExportToLuaExObj
+{
+	GMP_ExportToLuaExObj() { GMP_ExportToLuaEx(); }
+} ExportToLuaExObj;
+
+#endif  // defined(UNLUA_API)
+
+// how to use:
+// 1. add "GMP" to PrivateDependencyModuleNames in Unlua.Build.cs
+// 2. just included this header file into LuaCore.cpp in unlua module
+// 3. add GMP_RegisterToLua and GMP_UnregisterToLua to a proper code place
+//  a. // via ExportFunction
+//  b. // via Delegates in LuaEnv
+//  c. // via FUnLuaDelegates Callbacks
+//  or add manually codes with the lifecycle of lua_State
+// 4. EmmyLua Annotations as below and enjoy
+
+#if 0
+/*
+---GMP.lua 
+---EmmyLua Annotations
+
+---@class GMP
+local GMP = {}
+
+--- lua_function ListenObjectMessage(watchedobj, msgkey, nil,      globalfunction [,times]) --- must be nil if using global function
+--- lua_function ListenObjectMessage(watchedobj, msgkey, weakobj,  globalfuncstr  [,times]) --- or global function name string
+--- lua_function ListenObjectMessage(watchedobj, msgkey, tableobj, tablefuncstr   [,times]) --- otherwise
+--- lua_function ListenObjectMessage(watchedobj, msgkey, weakobj,  tablefunction  [,times]) --- treat as member function
+
+---@override func(watchedobj:Object, msgkey:string, weakobj:Object, function|string):integer
+---@override func(watchedobj:Object, msgkey:string, weakobj:Object, function|string, times:integer=-1):integer
+---@generic T : Object
+---@param watchedobj T
+---@param msgkey string
+---@param weakobj table|T
+---@param luafunction function|string
+---@param times integer
+---@return integer
+function GMP.ListenObjectMessage(watchedobj, msgkey, weakobj, luafunction, times)
+	return ListenObjectMessage(watchedobj, msgkey, weakobj, luafunction, times or -1)
+end
+
+--- lua_function UnbindObjectMessage(msgkey, ListenedObj)
+--- lua_function UnbindObjectMessage(msgkey, ListenedObj, Key)
+
+---@generic T : Object
+---@override func(string, T):void
+---@override func(string, integer):void
+---@override func(string, T, integer):void
+---@param msgkey string
+---@param listenedobj integer|T
+---@param key integer
+function GMP.UnbindObjectMessage(msgkey, listenedobj, key)
+	return UnbindObjectMessage(msgkey, listenedobj, key)
+end
+
+--- lua_function NotifyObjectMessage(obj, msgkey, ...):void
+
+---@generic T : Object|table
+---@override func(T, string, ...:any):void
+---@param obj T
+---@param msgkey string
+---@vararg any
+function GMP.NotifyObjectMessage(obj, msgkey, ...)
+	return NotifyObjectMessage(obj, msgkey, ...)
+end
+
+
+--- lua_function self:ListenWorldMessage(msgkey, memfunction [,times]):integer
+---@override func(msgkey:string, function|string):integer
+---@override func(msgkey:string, function|string, times:integer=-1):integer
+---@param msgkey string
+---@param memfunction function|string
+---@param times integer
+---@return integer
+function GMP.ObjListenWorldMessage(self, msgkey, memfunction, times)
+	local World = self:GetWorld()
+	return GMP.ListenObjectMessage(World, msgkey, self, func, times or -1)
+end
+
+--- lua_function self:ListenObjectMessage(obj, msgkey, memfunction [,times]):integer
+---@generic T : Object
+---@override func(T, msgkey:string, function|string):integer
+---@override func(T, msgkey:string, function|string, times:integer=-1):integer
+---@param msgkey string
+---@param memfunction function|string
+---@param times integer
+---@return integer
+function GMP.ObjListenObjectMessage(self, watchedobj, msgkey, func, times)
+	return GMP.ListenObjectMessage(watchedobj or self:GetWorld(), msgkey, self, func, times or -1)
+end
+
+--- lua_function self:NotifyObjectMessage(msgkey, ...):void
+---@override func(string, ...:any):void
+---@param msgkey string
+---@vararg any
+function GMP.ObjNotifyObjectMessage(self, msgkey, ...)
+	return GMP.NotifyObjectMessage(self, msgkey, ...)
+end
+
+
+--- lua_function self:UnbindObjectMessage(msgkey [, key]):void
+---@override func(string):void
+---@override func(string, integer):void
+---@param msgkey string
+---@param key integer
+function GMP.ObjUnbindObjectMessage(self, msgkey, key)
+	return GMP.UnbindObjectMessage(msgkey, self,  key or 0)
+end
+
+function GMP.Mixin(tableobj)
+	tableobj.ListenWorldMessage  = GMP.ObjListenWorldMessage
+	tableobj.ListenObjectMessage = GMP.ObjListenObjectMessage
+	tableobj.NotifyObjectMessage = GMP.ObjNotifyObjectMessage
+	tableobj.UnbindObjectMessage = GMP.ObjUnbindObjectMessage
+	return tableobj
+end
+*/
+#endif

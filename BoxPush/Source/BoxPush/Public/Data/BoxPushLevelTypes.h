@@ -62,7 +62,7 @@ struct BOXPUSH_API FBoxLevelInstance
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Instance")
 	TSoftObjectPtr<UInteractableDef> Definition;
 
-	/** 软引用为空时的回退。LoadDefinition 会用它去 /Game/Data/Interactables/DA_<Id> 找。 */
+	/** 主资产名。软引用为空时，只按这个 Id 向资产登记要定义，不再拼路径。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Instance")
 	FName DefinitionId;
 

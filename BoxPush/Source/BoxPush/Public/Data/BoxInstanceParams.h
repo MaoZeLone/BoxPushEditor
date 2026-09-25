@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Data/BoxPushLevelTypes.h"
+#include "Data/InteractableState.h"
 
 class UInteractableDef;
 struct FBoxRuntimeInstance;
@@ -12,6 +13,7 @@ struct BOXPUSH_API FBoxShownParam
 	FName CompId;
 	FName Key;
 	FText Label;
+	bool bCaptionAbove = false;
 	EBoxParamKind Kind = EBoxParamKind::Bool;
 	bool BoolValue = false;
 	int32 IntValue = 0;
@@ -38,4 +40,21 @@ namespace BoxInstanceParams
 	BOXPUSH_API int32 DelayMoves(const FBoxRuntimeInstance& Inst);
 	BOXPUSH_API FGameplayTag RequiredType(const FBoxRuntimeInstance& Inst);
 	BOXPUSH_API FGameplayTag AcceptType(const FBoxRuntimeInstance& Inst);
+	BOXPUSH_API FGameplayTag TriggerAcceptType(const FBoxRuntimeInstance& Inst);
+	BOXPUSH_API FName ResolveOverriddenName(const TArray<FBoxInstanceOverride>& Overrides, FName CompId, FName Key, FName Default);
+
+	inline FName FireEventOverrideKey(EBoxStateActionPhase Phase, int32 Index)
+	{
+		return FName(*FString::Printf(TEXT("Fire.%d.%d"), static_cast<int32>(Phase), Index));
+	}
+
+	inline FName TransitionOverrideComp()
+	{
+		return TEXT("Transition");
+	}
+
+	inline FName TransitionOverrideKey(int32 Index)
+	{
+		return FName(*FString::Printf(TEXT("Listen.%d"), Index));
+	}
 }

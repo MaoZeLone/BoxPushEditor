@@ -22,6 +22,18 @@ UENUM()
 enum class EBoxTransitionCondition : uint8
 {
 	OnEvent UMETA(DisplayName = "On Event"),
+	BeginOverlap UMETA(DisplayName = "Begin Overlap"),
+	EndOverlap UMETA(DisplayName = "End Overlap"),
+};
+
+/** 状态动作 FireEvent 广播的载荷。本关所有实例用自己的转移表对 EventId。 */
+USTRUCT()
+struct BOXPUSH_API FBoxInteractableEvent
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FName EventId;
 };
 
 /** One action row: pick a type, then fill that type's parameters. */
@@ -36,6 +48,10 @@ struct BOXPUSH_API FInteractableStateActionDef
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action",
 		meta = (EditCondition = "Type == EBoxStateActionType::FireEvent", EditConditionHides))
 	FName EventId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action",
+		meta = (EditCondition = "Type == EBoxStateActionType::FireEvent", EditConditionHides, DisplayName = "可实例重载"))
+	bool bAllowOverride = false;
 };
 
 /** One transition: from-state + condition -> to-state. */
@@ -53,6 +69,10 @@ struct BOXPUSH_API FInteractableTransitionDef
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition",
 		meta = (EditCondition = "Condition == EBoxTransitionCondition::OnEvent", EditConditionHides))
 	FName EventId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition",
+		meta = (EditCondition = "Condition == EBoxTransitionCondition::OnEvent", EditConditionHides, DisplayName = "可实例重载"))
+	bool bAllowOverride = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition")
 	FName ToState;

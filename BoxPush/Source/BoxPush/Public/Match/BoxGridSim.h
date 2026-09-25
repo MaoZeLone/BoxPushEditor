@@ -23,7 +23,7 @@ public:
 	bool Undo(FBoxStepResult& Out);
 	bool Redo(FBoxStepResult& Out);
 	void Restart(FBoxStepResult& Out);
-	void FlushImmediateReturns(TArray<FBoxInstanceDelta>& OutMoves, TArray<FName>* OutFiredEvents = nullptr);
+	void FlushImmediateReturns(TArray<FBoxInstanceDelta>& OutMoves, TArray<FName>* OutFiredEvents = nullptr, TArray<FVisualTransitionCue>* OutVisuals = nullptr);
 
 	void SetPaused(bool bInPaused) { bPaused = bInPaused; }
 	bool IsPaused() const { return bPaused; }
@@ -42,11 +42,19 @@ private:
 
 	int32 PushTravel(FBoxRuntimeInstance& Box, FIntPoint Dir) const;
 	void ApplyEvent(FBoxRuntimeInstance& Inst, FName EventId, FBoxInstanceDelta* Delta);
+	void ApplyCondition(FBoxRuntimeInstance& Inst, EBoxTransitionCondition Condition);
+	bool ApplyResolvedState(FBoxRuntimeInstance& Inst, FName NewState, FBoxInstanceDelta* Delta);
+	void NoteVisualTransition(const FBoxRuntimeInstance& Inst, FName FromState, EBoxTransitionCondition Condition, FName EventId, FName ToState);
+	bool IsTriggerOccupied(const FBoxRuntimeInstance& Inst) const;
 	void RefreshOccupancyStates();
 	void RunStateActions(FBoxRuntimeInstance& Inst, FName StateId, EBoxStateActionPhase Phase);
 	void TickStayActions();
 	void BeginActionDispatch(TArray<FName>* FiredEvents);
 	void EndActionDispatch();
+	void EnsureEventListener();
+	void DrainBroadcast();
+	void DeliverBroadcast(FName EventId);
+	virtual void BeginDestroy() override;
 	bool ComputeWon() const;
 	void Capture(FSnapshot& Out) const;
 	void Restore(const FSnapshot& In);
@@ -66,6 +74,11 @@ private:
 	TArray<FSnapshot> RedoStack;
 
 	TArray<FName>* ActionFiredSink = nullptr;
+	TArray<FName> PendingBroadcast;
+	TSet<uint64> DeliveredThisStep;
 	TSet<FName> EnteredThisStep;
 	bool bDispatchStateActions = false;
+	bool bListening = false;
+	bool bDraining = false;
+	TArray<FVisualTransitionCue> StepVisuals;
 };

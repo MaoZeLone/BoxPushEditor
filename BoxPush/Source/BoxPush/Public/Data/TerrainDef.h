@@ -34,6 +34,7 @@ public:
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 
 	static UTerrainDef* LoadById(FName InTerrainId);
+	static UTerrainDef* FindByCell(ETerrainCell Cell);
 
 	UFUNCTION(BlueprintCallable, Category = "BoxPush|Terrain")
 	void ApplyOfficialDefaults(FName InTerrainId);

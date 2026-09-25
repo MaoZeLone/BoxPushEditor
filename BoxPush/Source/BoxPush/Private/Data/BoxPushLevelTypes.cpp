@@ -1,7 +1,6 @@
 #include "Data/BoxPushLevelTypes.h"
 
 #include "Engine/AssetManager.h"
-#include "Data/BoxAssetPaths.h"
 #include "Data/InteractableDef.h"
 
 namespace
@@ -26,9 +25,7 @@ namespace
 			}
 		}
 
-		const FString Name = DefinitionId.ToString();
-		const FString AssetPath = BoxAssetPaths::InteractableObject(Name);
-		return LoadObject<UInteractableDef>(nullptr, *AssetPath);
+		return nullptr;
 	}
 }
 

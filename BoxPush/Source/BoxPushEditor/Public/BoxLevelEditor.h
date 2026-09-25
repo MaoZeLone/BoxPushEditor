@@ -131,6 +131,7 @@ public:
 	void SelectFolder(FGameplayTag InFolderTag);
 	void SelectBrush(FName InBrushId);
 	void SetMode(EBoxEditorMode InMode);
+	void ReloadFromAssets();
 	void SelectAtCell(FIntPoint Cell);
 	void SelectPick(EBoxSceneSelection Kind, FName InstanceId);
 	void GetCellPicks(FIntPoint Cell, TArray<FBoxCellPick>& Out) const;
@@ -288,6 +289,7 @@ private:
 	FReply OnUndo();
 	FReply OnRedo();
 	FReply OnValidate();
+	FReply OnReload();
 	FReply OnDelete();
 	FReply OnFrame();
 

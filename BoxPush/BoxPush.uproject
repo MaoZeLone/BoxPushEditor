@@ -21,6 +21,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "GMP",
+			"Enabled": true
+		},
+		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": true,
 			"TargetAllowList": [

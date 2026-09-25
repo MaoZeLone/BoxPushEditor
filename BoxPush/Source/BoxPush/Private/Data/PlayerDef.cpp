@@ -36,10 +36,6 @@ void UPlayerDef::ApplyOfficialDefaults()
 	{
 		PawnClass = PlayerBp;
 	}
-	else
-	{
-		PawnClass = ABoxPlayerCharacter::StaticClass();
-	}
 }
 
 FBoxAtlasFrame UPlayerDef::PickFrame(int32 FacingSteps, bool bPushing, bool bWalking, int32 FrameIndex) const

@@ -1,0 +1,324 @@
+﻿//  Copyright GenericMessagePlugin, Inc. All Rights Reserved.
+
+#pragma once
+#include "CoreMinimal.h"
+
+#include "Delegates/DelegateCombinations.h"
+#include "GMPKey.h"
+#include "GMPStruct.h"
+#include "GMPTypeTraits.h"
+#include "GMPUtils.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
+#include "Misc/ScopeExit.h"
+#include "UObject/Class.h"
+#include "UObject/TextProperty.h"
+
+#include "GMPBPLib.generated.h"
+
+class APlayerController;
+class UPackageMap;
+
+namespace GMP
+{
+struct GMP_API FLatentActionKeeper
+{
+	FLatentActionKeeper() = default;
+
+	void SetLatentInfo(const struct FLatentActionInfo& LatentInfo);
+	bool ExecuteAction(bool bClear = true) const;
+	FLatentActionKeeper(const struct FLatentActionInfo& LatentInfo);
+
+protected:
+	FName ExecutionFunction;
+	mutable int32 LinkID = 0;
+	FWeakObjectPtr CallbackTarget;
+};
+}  // namespace GMP
+
+UCLASS(Abstract, Blueprintable)
+class GMP_API UBlueprintableObject : public UObject
+{
+	GENERATED_BODY()
+public:
+	virtual UWorld* GetWorld() const override;
+};
+
+USTRUCT(BlueprintInternalUseOnly)
+struct FGMPObjNamePair
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY()
+	UObject* Obj = nullptr;
+
+	UPROPERTY()
+	FName TagName = NAME_None;
+};
+
+//////////////////////////////////////////////////////////////////////////
+DECLARE_DYNAMIC_DELEGATE_FourParams(FGMPScriptDelegate, const UObject*, Sender, const FName&, MessageId, FGMPKey, SeqId, UPARAM(ref) TArray<FGMPTypedAddr>&, Params);
+
+UENUM()
+enum EMessageAuthorityType
+{
+	EMessageTypeServer = 0x1,
+	EMessageTypeClient = 0x2,
+	EMessageTypeBoth = 0x3,
+	EMessageTypeStore = 0x4,
+};
+
+using EGMPAuthorityType = EMessageAuthorityType;
+
+#define GMP_WITH_VARIADIC_SUPPORT (UE_4_25_OR_LATER)
+
+UCLASS()
+class GMP_API UGMPBPLib : public UBlueprintFunctionLibrary
+{
+	GENERATED_BODY()
+public:
+	UFUNCTION(BlueprintPure, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static FGMPObjNamePair MakeObjNamePair(const UObject* InObj, FName InName) { return FGMPObjNamePair{const_cast<UObject*>(InObj), InName}; }
+
+	// Unlisten
+	UFUNCTION(BlueprintCallable, Category = "GMP|Message", meta = (WorldContext = "Obj", StringAsMessageTag = "MessageId", AutoCreateRefTerm = "MessageId", AdvancedDisplay = "Mgr"))
+	static bool UnlistenMessage(const FString& MessageId, UObject* Listener, UGMPManager* Mgr = nullptr, UObject* Obj = nullptr);
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "Listener", BlueprintInternalUseOnly = true, AutoCreateRefTerm = "MessageId", AdvancedDisplay = "Mgr"))
+	static bool UnlistenMessageByKey(const FString& MessageId, UObject* Listener, UGMPManager* Mgr = nullptr);
+
+	// Listen
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, Times = "-1", Order = "0", Type = "0", AutoCreateRefTerm = "WatchedObj"))
+	static FGMPTypedAddr ListenMessageByKey(FName MessageId, const FGMPScriptDelegate& Delegate, int32 Times, int32 Order, uint8 Type, UGMPManager* Mgr, const FGMPObjNamePair& WatchedObj);
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, Times = "-1", Order = "0", Type = "0", AutoCreateRefTerm = "WatchedObj"))
+	static FGMPTypedAddr ListenMessageByKeyValidate(const TArray<FName>& ArgNames, FName MessageId, const FGMPScriptDelegate& Delegate, int32 Times, int32 Order, uint8 Type, UGMPManager* Mgr, const FGMPObjNamePair& WatchedObj);
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "Listener", DefaultToSelf = "Listener", Times = "-1", Order = "0", Type = "0", AutoCreateRefTerm = "WatchedObj"))
+	static FGMPTypedAddr ListenMessageViaKey(UObject* Listener, FName MessageId, FName EventName, int32 Times, int32 Order, uint8 Type, uint8 BodyDataMask, UGMPManager* Mgr, const FGMPObjNamePair& WatchedObj, int64 ParmBitMask = 0);
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "Listener", DefaultToSelf = "Listener", Times = "-1", Order = "0", Type = "0", AutoCreateRefTerm = "WatchedObj"))
+	static FGMPTypedAddr
+		ListenMessageViaKeyValidate(const TArray<FName>& ArgNames, UObject* Listener, FName MessageId, FName EventName, int32 Times, int32 Order, uint8 Type, uint8 BodyDataMask, UGMPManager* Mgr, const FGMPObjNamePair& WatchedObj, int64 ParmBitMask = 0);
+
+	// Row form of the collection store: the event takes (int32 Row, <element struct> Item).
+	// Index >= 0 follows that slot; Index < 0 fires once per changed row.
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "Listener", DefaultToSelf = "Listener", Index = "-1", Times = "-1", Order = "0", Type = "0", AutoCreateRefTerm = "WatchedObj"))
+	static FGMPTypedAddr ListenRowViaKey(UObject* Listener, FName MessageId, FName EventName, int32 Index, int32 Times, int32 Order, uint8 Type, UGMPManager* Mgr, const FGMPObjNamePair& WatchedObj);
+
+	// Notify
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, AutoCreateRefTerm = "Sender,Params,MessageId"))
+	static bool NotifyMessageByKeyRet(const FString& MessageId, const FGMPObjNamePair& Sender, UPARAM(ref) TArray<FGMPTypedAddr>& Params, uint8 Type = 0, UGMPManager* Mgr = nullptr);
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, AutoCreateRefTerm = "Sender,MessageId", Variadic))
+	static bool NotifyMessageByKeyVariadicRet(const FString& MessageId, const FGMPObjNamePair& Sender, uint8 Type = 0, UGMPManager* Mgr = nullptr);
+	DECLARE_FUNCTION(execNotifyMessageByKeyVariadicRet);
+
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, AutoCreateRefTerm = "Sender,Params,MessageId"))
+	static void NotifyMessageByKey(const FString& MessageId, const FGMPObjNamePair& Sender, UPARAM(ref) TArray<FGMPTypedAddr>& Params, uint8 Type = 0, UGMPManager* Mgr = nullptr)
+	{
+		NotifyMessageByKeyRet(MessageId, Sender, Params, Type, Mgr);
+	}
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, AutoCreateRefTerm = "Sender,MessageId", Variadic))
+	static void NotifyMessageByKeyVariadic(const FString& MessageId, const FGMPObjNamePair& Sender, uint8 Type = 0, UGMPManager* Mgr = nullptr);
+	DECLARE_FUNCTION(execNotifyMessageByKeyVariadic);
+
+	// RequestMessage
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "Sender", DefaultToSelf = "Sender", AutoCreateRefTerm = "Params,MessageId"))
+	static bool RequestMessageRet(FGMPKey& RspKey, FName EventName, const FString& MessageId, const FGMPObjNamePair& Sender, UPARAM(ref) TArray<FGMPTypedAddr>& Params, uint8 Type = 0, UGMPManager* Mgr = nullptr);
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "Sender", DefaultToSelf = "Sender", AutoCreateRefTerm = "MessageId", Variadic))
+	static bool RequestMessageVariadicRet(FGMPKey& RspKey, FName EventName, const FString& MessageId, const FGMPObjNamePair& Sender, uint8 Type = 0, UGMPManager* Mgr = nullptr);
+	DECLARE_FUNCTION(execRequestMessageVariadicRet);
+
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "Sender", DefaultToSelf = "Sender", AutoCreateRefTerm = "Params,MessageId"))
+	static void RequestMessage(FGMPKey& RspKey, FName EventName, const FString& MessageId, const FGMPObjNamePair& Sender, UPARAM(ref) TArray<FGMPTypedAddr>& Params, uint8 Type = 0, UGMPManager* Mgr = nullptr)
+	{
+		RequestMessageRet(RspKey, EventName, MessageId, Sender, Params, Type, Mgr);
+	}
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "Sender", DefaultToSelf = "Sender", AutoCreateRefTerm = "MessageId", Variadic))
+	static void RequestMessageVariadic(FGMPKey& RspKey, FName EventName, const FString& MessageId, const FGMPObjNamePair& Sender, uint8 Type = 0, UGMPManager* Mgr = nullptr);
+	DECLARE_FUNCTION(execRequestMessageVariadic);
+
+	// ResponseMessage
+	UFUNCTION(BlueprintCallable, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "SigSource", DefaultToSelf = "SigSource", AutoCreateRefTerm = "Params,MessageId"))
+	static void ResponseMessage(FGMPKey SeqId, UPARAM(ref) TArray<FGMPTypedAddr>& Params, UObject* SigSource, UGMPManager* Mgr = nullptr);
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, HidePin = "SigSource", DefaultToSelf = "SigSource", AutoCreateRefTerm = "MessageId", Variadic))
+	static void ResponseMessageVariadic(FGMPKey SeqId, UObject* SigSource, UGMPManager* Mgr = nullptr);
+	DECLARE_FUNCTION(execResponseMessageVariadic);
+
+	//////////////////////////////////////////////////////////////////////////
+	// Dereference a message parameter by index — sets MostRecentPropertyAddress to the original
+	// data pointer stored in MsgArray[Index], enabling zero-copy reference access.
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, CustomStructureParam = "OutItem"))
+	static void GMPDerefParam(const TArray<FGMPTypedAddr>& MsgArray, int32 Index, FGMPTypedAddr& OutItem);
+	DECLARE_FUNCTION(execGMPDerefParam);
+
+	// Extract the raw pointer (as int64) from MsgArray[Index].Value.
+	// Used by FKCHandler_GMPDerefParam to get the pointer into an int64 local.
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static int64 GMPGetParamPtr(const TArray<FGMPTypedAddr>& MsgArray, int32 Index);
+	DECLARE_FUNCTION(execGMPGetParamPtr);
+
+	// Dereference an int64 pointer — sets Stack.MostRecentPropertyAddress to (uint8*)InPtr.
+	// Only called via InlineGeneratedParameter, never placed in blueprints directly.
+	UFUNCTION(CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static void GMPDerefPtr(int64 InPtr);
+	DECLARE_FUNCTION(execGMPDerefPtr);
+
+	// Process a RefCustomEvent with PersistentFrame writeback.
+	// After event execution, ref/out params in PersistentFrame are copied back to Parms.
+	static void ProcessRefEvent(UObject* Target, UFunction* Func, void* Parms);
+
+	// Called by compiler-injected stub bytecode to copy PersistentFrame values
+	// back to the caller's Parms via OutParms chain. Editor-only (compiled into BP stubs).
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static void WriteBackFromPersistentFrame();
+	DECLARE_FUNCTION(execWriteBackFromPersistentFrame);
+
+	//////////////////////////////////////////////////////////////////////////
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, NativeMakeFunc, BlueprintInternalUseOnly = true, CompactNodeTitle = "->", CustomStructureParam = "InAny", PropertyEnum = "255"))
+	static FGMPTypedAddr AddrFromWild(uint8 PropertyEnum, const FGMPTypedAddr& InAny);
+	DECLARE_FUNCTION(execAddrFromWild);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, CompactNodeTitle = "->", ArrayParm = "InAny", ArrayTypeDependentParams = "OutItem", ElementEnum = "255"))
+	static FGMPTypedAddr AddrFromArray(uint8 ElementEnum, const TArray<int32>& InAny);
+	DECLARE_FUNCTION(execAddrFromArray);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, CompactNodeTitle = "->", SetParam = "InAny", PropertyEnum = "255"))
+	static FGMPTypedAddr AddrFromSet(uint8 ElementEnum, const TSet<int32>& InAny);
+	DECLARE_FUNCTION(execAddrFromSet);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, CompactNodeTitle = "->", MapParam = "InAny", ValueEnum = "255", KeyEnum = "255"))
+	static FGMPTypedAddr AddrFromMap(uint8 ValueEnum, uint8 KeyEnum, const TMap<int32, int32>& InAny);
+	DECLARE_FUNCTION(execAddrFromMap);
+
+	//////////////////////////////////////////////////////////////////////////
+	static void InnerSet(FFrame& Stack, uint8 PropertyEnum = -1, uint8 ElementEnum = -1, uint8 KeyEnum = -1);
+	UFUNCTION(BlueprintCallable, Category = "GMP|Message", CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "SetValue", CompactNodeTitle = "SET", CustomStructureParam = "InItem"))
+	static void SetValue(UPARAM(ref) TArray<FGMPTypedAddr>& TargetArray, int32 Index, const FGMPTypedAddr& InItem);
+	DECLARE_FUNCTION(execSetValue);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "SetWild", CompactNodeTitle = "SET", BlueprintInternalUseOnly = true, CustomStructureParam = "InItem", PropertyEnum = "255"))
+	static void SetWild(uint8 PropertyEnum, UPARAM(ref) TArray<FGMPTypedAddr>& TargetArray, int32 Index, const FGMPTypedAddr& InItem);
+	DECLARE_FUNCTION(execSetWild);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "SetArray", CompactNodeTitle = "SET", BlueprintInternalUseOnly = true, ArrayParm = "InItem", ElementEnum = "255"))
+	static void SetArray(uint8 ElementEnum, UPARAM(ref) TArray<FGMPTypedAddr>& TargetArray, int32 Index, TArray<int32>& InItem);
+	DECLARE_FUNCTION(execSetArray);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "SetMap", CompactNodeTitle = "SET", BlueprintInternalUseOnly = true, MapParam = "InItem", KeyEnum = "255", ValueEnum = "255"))
+	static void SetMap(uint8 KeyEnum, uint8 ValueEnum, UPARAM(ref) TArray<FGMPTypedAddr>& TargetArray, int32 Index, TMap<int32, int32>& InItem);
+	DECLARE_FUNCTION(execSetMap);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "SetSet", CompactNodeTitle = "SET", BlueprintInternalUseOnly = true, SetParam = "InItem", ElementEnum = "255"))
+	static void SetSet(uint8 ElementEnum, UPARAM(ref) TArray<FGMPTypedAddr>& TargetArray, int32 Index, TSet<int32>& InItem);
+	DECLARE_FUNCTION(execSetSet);
+
+	//////////////////////////////////////////////////////////////////////////
+	static void InnerGet(FFrame& Stack, uint8 PropertyEnum = 255, uint8 ElementEnum = 255, uint8 KeyEnum = 255);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "AddrToWild", BlueprintInternalUseOnly = true, CompactNodeTitle = "GET", CustomStructureParam = "OutItem"))
+	static void AddrToWild(uint8 PropertyEnum, const TArray<FGMPTypedAddr>& TargetArray, int32 Index, FGMPTypedAddr& OutItem);
+	DECLARE_FUNCTION(execAddrToWild);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "AddrToArray", BlueprintInternalUseOnly = true, CompactNodeTitle = "GET", ArrayParm = "OutItem"))
+	static void AddrToArray(uint8 ElementEnum, const TArray<FGMPTypedAddr>& TargetArray, int32 Index, TArray<int32>& OutItem);
+	DECLARE_FUNCTION(execAddrToArray);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "AddrToMap", BlueprintInternalUseOnly = true, CompactNodeTitle = "GET", MapParam = "OutItem"))
+	static void AddrToMap(uint8 KeyEnum, uint8 ValueEnum, const TArray<FGMPTypedAddr>& TargetArray, int32 Index, TMap<int32, int32>& OutItem);
+	DECLARE_FUNCTION(execAddrToMap);
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, DisplayName = "AddrToSet", BlueprintInternalUseOnly = true, CompactNodeTitle = "GET", SetParam = "OutItem"))
+	static void AddrToSet(uint8 ElementEnum, const TArray<FGMPTypedAddr>& TargetArray, int32 Index, TSet<int32>& OutItem);
+	DECLARE_FUNCTION(execAddrToSet);
+
+public:
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, CustomStructureParam = "InAny"))
+	static FGMPTypedAddr AddrFromVariadic(const FGMPTypedAddr& InAny);
+	DECLARE_FUNCTION(execAddrFromVariadic);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, CustomStructureParam = "InItem"))
+	static void SetVariadic(UPARAM(ref) TArray<FGMPTypedAddr>& TargetArray, int32 Index, const FGMPTypedAddr& InItem);
+	DECLARE_FUNCTION(execSetVariadic);
+
+	// byte to int
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CustomStructureParam = "Value", BlueprintThreadSafe, BlueprintInternalUseOnly = true))
+	static int32 MakeLiteralInt(const uint8& Value);
+	DECLARE_FUNCTION(execMakeLiteralInt);
+
+	// int to byte
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CustomStructureParam = "Value", BlueprintThreadSafe, BlueprintInternalUseOnly = true))
+	static uint8 MakeLiteralByte(const int32& Value);
+	DECLARE_FUNCTION(execMakeLiteralByte);
+
+	UFUNCTION(BlueprintPure, meta = (BlueprintThreadSafe, BlueprintInternalUseOnly = true, DeterminesOutputType = "Value", DynamicOutputParam))
+	static UClass* MakeLiteralClass(UClass* Value) { return Value; }
+	UFUNCTION(BlueprintPure, meta = (BlueprintThreadSafe, BlueprintInternalUseOnly = true, DeterminesOutputType = "Value", DynamicOutputParam))
+	static UObject* MakeLiteralObject(UObject* Value) { return Value; }
+
+	//UFUNCTION(BlueprintPure, meta = (BlueprintThreadSafe, BlueprintInternalUseOnly = true))
+	//static FKey MakeInputKey(FKey Value) { return Value; }
+
+public:
+	static UPackageMap* GetPackageMap(APlayerController* PC);
+
+	UFUNCTION(BlueprintPure, meta = (BlueprintInternalUseOnly = true))
+	static bool HasAnyListeners(FName InMsgKey, UGMPManager* Mgr = nullptr);
+
+	// Work around for that dynamic create event call not be call directly
+	UFUNCTION(BlueprintCallable, meta = (DefaultToSelf = Obj, WorldContext = Obj, BlueprintInternalUseOnly = true, AutoCreateRefTerm = "Params"))
+	static void CallFunctionPacked(UObject* Obj, FName FuncName, UPARAM(ref) TArray<FGMPTypedAddr>& Params);
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (Variadic, DefaultToSelf = Obj, WorldContext = Obj, BlueprintInternalUseOnly = true))
+	static void CallFunctionVariadic(UObject* Obj, FName FuncName);
+	DECLARE_FUNCTION(execCallFunctionVariadic);
+
+	// Reflectively call a member UFunction on Obj by name, with no hard dependency on
+	// Obj's class (resolved at runtime via FindFunction + ProcessEvent). Every function
+	// parameter (input/output) and the return value flow through the variadic pins, in
+	// the function's CPF_Parm declaration order. This is the engine-standard ProcessEvent
+	// path -- intentionally NOT the GMP message path (CallMessageFunction).
+	UFUNCTION(BlueprintCallable, CustomThunk, meta = (Variadic, BlueprintInternalUseOnly = true))
+	static void CallObjectFunctionByName(UObject* Obj, FName FuncName);
+	DECLARE_FUNCTION(execCallObjectFunctionByName);
+
+	static bool CallEventFunction(UObject* Obj, const FName FuncName, const TArray<uint8>& Buffer, UPackageMap* PackageMap, EFunctionFlags VerifyFlags = FUNC_None);
+	static bool CallEventDelegate(UObject* Obj, const FName EventName, const TArray<uint8>& Buffer, UPackageMap* PackageMap);
+	// Params as TArrayView (allocator-agnostic): callers pass TArray<...> (default or TInlineAllocator) directly, no copy.
+	static bool CallMessageFunction(UObject* Obj, UFunction* Function, TArrayView<const FGMPTypedAddr> Params, uint64 WritebackFlags = -1);
+
+public:
+	//////////////////////////////////////////////////////////////////////////
+	// GMPMemberChain runtime accessor.
+	// Walks a member chain (A.B.C) off InObject purely by FName reflection and
+	// writes the leaf value back to the wildcard OutValue pin. The compiled
+	// blueprint carries only the FName chain (literals) + the runtime UObject,
+	// so it never hard references the target UClass (no hard load dependency).
+	// Mid-chain hops transparently follow object/weak/soft-object pointers and
+	// descend into struct members; only the leaf type drives the output pin.
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true, CustomStructureParam = "OutValue"))
+	static void GetMemberByChain(UObject* InObject, const TArray<FName>& Chain, FGMPTypedAddr& OutValue);
+	DECLARE_FUNCTION(execGetMemberByChain);
+
+	// Resolves the chain to the leaf property + its address. Returns false (and
+	// leaves OutAddr/OutProp untouched) if any hop fails or hits a null pointer.
+	// bIsObjectContainer: true => Container is a UObject*; false => raw struct addr.
+	static bool ResolveMemberChain(void* Container, UStruct* ContainerType, const TArray<FName>& Chain, void*& OutAddr, FProperty*& OutProp);
+
+	//////////////////////////////////////////////////////////////////////////
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (Variadic, CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static void MessageFromVariadic(TArray<FGMPTypedAddr>& MsgArr);
+	DECLARE_FUNCTION(execMessageFromVariadic);
+
+	static bool MessageToFrame(UFunction* Function, void* FramePtr, TArrayView<const FGMPTypedAddr> Params);
+	static bool MessageToArchive(FArchive& ArToSave, UFunction* Function, const TArray<FGMPTypedAddr>& Params, UPackageMap* PackageMap = nullptr);
+	static bool ArchiveToFrame(FArchive& ArToLoad, UFunction* Function, void* FramePtr, UPackageMap* PackageMap = nullptr);
+	static bool ArchiveToMessage(const TArray<uint8>& Buffer, GMP::FTypedAddresses& Params, const TArray<FProperty*>& Props, UPackageMap* PackageMap = nullptr);
+	template<typename... TArgs>
+	static TArray<FGMPTypedAddr> VariadicToMessage(TArgs&... Args)
+	{
+		return TArray<FGMPTypedAddr>{FGMPTypedAddr::MakeMsg(Args)...};
+	}
+
+	static bool NetSerializeProperty(FArchive& Ar, FProperty* Prop, void* ItemPtr, UPackageMap* PackageMap = nullptr);
+
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (Variadic, CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static FString FormatStringByOrder(const FString& InFmtStr);
+	DECLARE_FUNCTION(execFormatStringByOrder);
+
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (Variadic, CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static FString FormatStringByName(const FString& InFmtStr, const TArray<FString>& InNames);
+	DECLARE_FUNCTION(execFormatStringByName);
+
+	UFUNCTION(BlueprintPure, meta = (CallableWithoutWorldContext, BlueprintInternalUseOnly = true))
+	static FString FormatStringByNameLegacy(const FString& InFmtStr, const TMap<FString, FString>& InArgs);
+
+	UFUNCTION(BlueprintPure, Category = "GMP|Utils", meta = (WorldContext = "InCtx"))
+	static bool IsListenServer(UObject* InCtx);
+
+	UFUNCTION(BlueprintPure, Category = "GMP|Utils", meta = (CallableWithoutWorldContext))
+	static bool IsModuleLoaded(const FString& ModuleName);
+};

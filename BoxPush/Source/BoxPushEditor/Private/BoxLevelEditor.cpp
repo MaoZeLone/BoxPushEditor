@@ -182,15 +182,12 @@ namespace
 		switch (Asset.Brush)
 		{
 		case EBoxLevelBrush::Floor:
-			if (const UTerrainDef* Terrain = UTerrainDef::LoadById(TEXT("Floor")))
-			{
-				Texture = TextureFromSprite(Terrain->Sprite);
-			}
-			break;
 		case EBoxLevelBrush::Wall:
-			if (const UTerrainDef* Terrain = UTerrainDef::LoadById(TEXT("Wall")))
+		case EBoxLevelBrush::Empty:
+			Texture = TextureFromSprite(Asset.Terrain.IsValid() ? Asset.Terrain->Sprite : nullptr);
+			if (Asset.Brush == EBoxLevelBrush::Empty && !Texture)
 			{
-				Texture = TextureFromSprite(Terrain->Sprite);
+				Texture = HoleIcon();
 			}
 			break;
 		case EBoxLevelBrush::Player:
@@ -201,14 +198,11 @@ namespace
 			break;
 		case EBoxLevelBrush::Interactable:
 		{
-			const UInteractableDef* Def = LoadObject<UInteractableDef>(nullptr, *BoxAssetPaths::InteractableObject(Asset.Id.ToString()));
+			const UInteractableDef* Def = Asset.Definition.Get();
 			const UVisualSpriteComp* Comp = (Def && Def->SpriteComps.Num() > 0) ? Def->SpriteComps[0].Get() : nullptr;
 			Texture = TextureFromSprite(Comp);
 			break;
 		}
-		case EBoxLevelBrush::Empty:
-			Texture = HoleIcon();
-			break;
 		default:
 			break;
 		}
@@ -301,6 +295,12 @@ namespace
 			else if (const UPedalLogic* Pedal = Cast<UPedalLogic>(Comp))
 			{
 				Parts.Add(FString::Printf(TEXT("踏板，接受%s"), *FolderLabel(Pedal->AcceptType)));
+			}
+			else if (const UTriggerLogic* Trigger = Cast<UTriggerLogic>(Comp))
+			{
+				Parts.Add(Trigger->AcceptType.IsValid()
+					? FString::Printf(TEXT("触发，接受%s"), *FolderLabel(Trigger->AcceptType))
+					: FString(TEXT("触发，接受任意")));
 			}
 			else if (const UBlockingLogic* Blocking = Cast<UBlockingLogic>(Comp))
 			{
@@ -852,6 +852,19 @@ void FBoxLevelEditor::MoveLevel(int32 Direction)
 	NotifyChanged();
 }
 
+void FBoxLevelEditor::ReloadFromAssets()
+{
+	if (bPlaying)
+	{
+		return;
+	}
+	RebuildPalette();
+	RebuildIssues();
+	RefreshPreview();
+	Status = TEXT("已刷新数据和预览");
+	NotifyChanged();
+}
+
 void FBoxLevelEditor::RebuildPalette()
 {
 	AllAssets.Reset();
@@ -1374,13 +1387,20 @@ void FBoxLevelEditor::SelectAtCell(FIntPoint Cell)
 
 void FBoxLevelEditor::SetSelectedCell(FIntPoint Cell)
 {
-	if (!CurrentLevel || bPlaying || SelectionKind == EBoxSceneSelection::None || !CurrentLevel->IsInside(Cell))
+	if (!CurrentLevel || bPlaying || SelectionKind == EBoxSceneSelection::None)
 	{
+		return;
+	}
+	if (!CurrentLevel->ExpandTo(Cell))
+	{
+		Status = TEXT("单边最多 20 格");
+		NotifyChanged();
 		return;
 	}
 	FBoxEditScope Scope(this);
 	if (CurrentLevel->GetCell(Cell) != ETerrainCell::Floor)
 	{
+		CurrentLevel->FitToContent();
 		Status = TEXT("只能放到地板上");
 		NotifyChanged();
 		return;
@@ -1390,6 +1410,7 @@ void FBoxLevelEditor::SetSelectedCell(FIntPoint Cell)
 	{
 		if (HasBlockingAt(Cell))
 		{
+			CurrentLevel->FitToContent();
 			Status = TEXT("玩家必须站在空地板上");
 			NotifyChanged();
 			return;
@@ -1406,6 +1427,7 @@ void FBoxLevelEditor::SetSelectedCell(FIntPoint Cell)
 		const bool bBlocking = Def && Def->FindLogic<UBlockingLogic>();
 		if (Inst->Cell != Cell && bBlocking && (HasBlockingAt(Cell) || CurrentLevel->PlayerSpawn == Cell))
 		{
+			CurrentLevel->FitToContent();
 			Status = TEXT("不能叠放阻挡物");
 			NotifyChanged();
 			return;
@@ -1418,9 +1440,11 @@ void FBoxLevelEditor::SetSelectedCell(FIntPoint Cell)
 	}
 	else
 	{
+		CurrentLevel->FitToContent();
 		return;
 	}
 
+	CurrentLevel->FitToContent();
 	CurrentLevel->MarkPackageDirty();
 	RebuildIssues();
 	RefreshPreview();
@@ -1768,21 +1792,6 @@ namespace
 		}
 	}
 
-	void KeepStarterInside(ULevelData* Level)
-	{
-		if (!Level)
-		{
-			return;
-		}
-		auto ClampCell = [Level](FIntPoint Cell)
-		{
-			Cell.X = FMath::Clamp(Cell.X, 0, Level->Width - 1);
-			Cell.Y = FMath::Clamp(Cell.Y, 0, Level->Height - 1);
-			return Cell;
-		};
-		Level->PlayerSpawn = ClampCell(Level->PlayerSpawn);
-	}
-
 	class SBoxNewLevelDialog : public SCompoundWidget
 	{
 	public:
@@ -1795,8 +1804,6 @@ namespace
 		{
 			UsedIds = InArgs._UsedIds;
 			LevelId = InArgs._SuggestedId;
-			Width = ULevelData::DefaultSize;
-			Height = ULevelData::DefaultSize;
 
 			auto Label = [](const FText& Text)
 			{
@@ -1860,40 +1867,6 @@ namespace
 							return FText::Format(LOCTEXT("AssetNameHint", "资产名 DA_{0}，创建后不再改"), FText::FromString(LevelId));
 						})
 					]
-					+ SVerticalBox::Slot().AutoHeight().Padding(0, 4)
-					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Label(LOCTEXT("NewW", "宽"))]
-						+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0, 0, 8, 0)
-						[
-							SNew(SSpinBox<int32>)
-							.MinValue(ULevelData::MinSize)
-							.MaxValue(ULevelData::MaxSize)
-							.MinSliderValue(ULevelData::MinSize)
-							.MaxSliderValue(ULevelData::MaxSize)
-							.Delta(1)
-							.Value_Lambda([this] { return Width; })
-							.OnValueChanged_Lambda([this](int32 Value)
-							{
-								Width = FMath::Clamp(Value, ULevelData::MinSize, ULevelData::MaxSize);
-							})
-						]
-						+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[Label(LOCTEXT("NewH", "高"))]
-						+ SHorizontalBox::Slot().FillWidth(1.f)
-						[
-							SNew(SSpinBox<int32>)
-							.MinValue(ULevelData::MinSize)
-							.MaxValue(ULevelData::MaxSize)
-							.MinSliderValue(ULevelData::MinSize)
-							.MaxSliderValue(ULevelData::MaxSize)
-							.Delta(1)
-							.Value_Lambda([this] { return Height; })
-							.OnValueChanged_Lambda([this](int32 Value)
-							{
-								Height = FMath::Clamp(Value, ULevelData::MinSize, ULevelData::MaxSize);
-							})
-						]
-					]
 					+ SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 2)
 					[
 						SNew(STextBlock)
@@ -1936,8 +1909,6 @@ namespace
 							{
 								bAccepted = true;
 								DisplayName = DisplayName.TrimStartAndEnd();
-								Width = FMath::Clamp(Width, ULevelData::MinSize, ULevelData::MaxSize);
-								Height = FMath::Clamp(Height, ULevelData::MinSize, ULevelData::MaxSize);
 								Close();
 								return FReply::Handled();
 							})
@@ -1952,8 +1923,6 @@ namespace
 		FString GetDisplayName() const { return DisplayName; }
 		FString GetLevelId() const { return LevelId; }
 		FString GetDesignerNote() const { return DesignerNote; }
-		int32 GetWidth() const { return Width; }
-		int32 GetHeight() const { return Height; }
 
 	private:
 		void Close()
@@ -1969,8 +1938,6 @@ namespace
 		FString DisplayName;
 		FString LevelId;
 		FString DesignerNote;
-		int32 Width = ULevelData::DefaultSize;
-		int32 Height = ULevelData::DefaultSize;
 		bool bAccepted = false;
 	};
 }
@@ -2009,11 +1976,6 @@ void FBoxLevelEditor::NewLevel()
 	Level->ApplyNewLevelDefaults(Id);
 	Level->DisplayName = FText::FromString(Dialog->GetDisplayName());
 	Level->DesignerNote = Dialog->GetDesignerNote();
-	if (Dialog->GetWidth() != Level->Width || Dialog->GetHeight() != Level->Height)
-	{
-		Level->ResizeGrid(Dialog->GetWidth(), Dialog->GetHeight());
-		KeepStarterInside(Level);
-	}
 	FAssetRegistryModule::AssetCreated(Level);
 	Package->MarkPackageDirty();
 	ApplyNewCatalogRow(Level);
@@ -2229,8 +2191,14 @@ bool FBoxLevelEditor::HasBlockingAt(FIntPoint Cell) const
 
 void FBoxLevelEditor::PaintCell(FIntPoint Cell, bool bErase)
 {
-	if (!CurrentLevel || bPlaying || !CurrentLevel->IsInside(Cell))
+	if (!CurrentLevel || bPlaying)
 	{
+		return;
+	}
+	if (!CurrentLevel->ExpandTo(Cell))
+	{
+		Status = TEXT("单边最多 20 格");
+		NotifyChanged();
 		return;
 	}
 	FBoxEditScope Scope(this);
@@ -2271,6 +2239,7 @@ void FBoxLevelEditor::PaintCell(FIntPoint Cell, bool bErase)
 			}
 			else
 			{
+				CurrentLevel->FitToContent();
 				Status = TEXT("这一格没有可擦的物体");
 				NotifyChanged();
 				return;
@@ -2281,6 +2250,7 @@ void FBoxLevelEditor::PaintCell(FIntPoint Cell, bool bErase)
 	case EBoxLevelBrush::Player:
 		if (CurrentLevel->GetCell(Cell) != ETerrainCell::Floor || HasBlockingAt(Cell))
 		{
+			CurrentLevel->FitToContent();
 			Status = TEXT("玩家必须站在空地板上");
 			NotifyChanged();
 			return;
@@ -2290,10 +2260,12 @@ void FBoxLevelEditor::PaintCell(FIntPoint Cell, bool bErase)
 	case EBoxLevelBrush::Interactable:
 		if (!Asset || !Asset->Definition.IsValid())
 		{
+			CurrentLevel->FitToContent();
 			return;
 		}
 		if (CurrentLevel->GetCell(Cell) != ETerrainCell::Floor)
 		{
+			CurrentLevel->FitToContent();
 			Status = TEXT("交互物必须放在地板上");
 			NotifyChanged();
 			return;
@@ -2303,12 +2275,14 @@ void FBoxLevelEditor::PaintCell(FIntPoint Cell, bool bErase)
 				return Inst.Cell == Cell && Inst.GetResolvedDefinitionId() == Asset->Id;
 			}))
 		{
+			CurrentLevel->FitToContent();
 			Status = TEXT("这一格已经有这个物体");
 			NotifyChanged();
 			return;
 		}
 		if (Asset->Definition->FindLogic<UBlockingLogic>() && (HasBlockingAt(Cell) || CurrentLevel->PlayerSpawn == Cell))
 		{
+			CurrentLevel->FitToContent();
 			Status = TEXT("不能叠放阻挡物");
 			NotifyChanged();
 			return;
@@ -2324,6 +2298,7 @@ void FBoxLevelEditor::PaintCell(FIntPoint Cell, bool bErase)
 		break;
 	}
 
+	CurrentLevel->FitToContent();
 	CurrentLevel->MarkPackageDirty();
 	PruneSelection();
 	RebuildIssues();
@@ -2614,6 +2589,13 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeToolbar()
 		]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(2)
 		[
+			SNew(SButton).Text(LOCTEXT("Reload", "刷新"))
+			.ToolTipText(LOCTEXT("ReloadTip", "重新读取交互物、地形和角色数据，并刷新预览"))
+			.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
+			.OnClicked(this, &SBoxLevelEditor::OnReload)
+		]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(2)
+		[
 			SNew(SButton).Text(LOCTEXT("Validate", "校验"))
 			.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
 			.OnClicked(this, &SBoxLevelEditor::OnValidate)
@@ -2736,52 +2718,6 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeDetails()
 			+ SVerticalBox::Slot().AutoHeight()
 			[
 				DetailCategory(LOCTEXT("Rules", "规则"))
-			]
-			+ SVerticalBox::Slot().AutoHeight()
-			[
-				DetailRow(LOCTEXT("Width", "宽"),
-					SNew(SSpinBox<int32>)
-					.MinValue(ULevelData::MinSize)
-					.MaxValue(ULevelData::MaxSize)
-					.MinSliderValue(ULevelData::MinSize)
-					.MaxSliderValue(ULevelData::MaxSize)
-					.Delta(1)
-					.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
-					.Value_Lambda([this]
-					{
-						ULevelData* Level = Editor ? Editor->GetLevel() : nullptr;
-						return Level ? Level->Width : 8;
-					})
-					.OnValueCommitted_Lambda([this](int32 Value, ETextCommit::Type)
-					{
-						if (Editor && Editor->GetLevel())
-						{
-							Editor->SetSize(Value, Editor->GetLevel()->Height);
-						}
-					}))
-			]
-			+ SVerticalBox::Slot().AutoHeight()
-			[
-				DetailRow(LOCTEXT("Height", "高"),
-					SNew(SSpinBox<int32>)
-					.MinValue(ULevelData::MinSize)
-					.MaxValue(ULevelData::MaxSize)
-					.MinSliderValue(ULevelData::MinSize)
-					.MaxSliderValue(ULevelData::MaxSize)
-					.Delta(1)
-					.IsEnabled_Lambda([this] { return Editor && !Editor->IsPlaying(); })
-					.Value_Lambda([this]
-					{
-						ULevelData* Level = Editor ? Editor->GetLevel() : nullptr;
-						return Level ? Level->Height : 8;
-					})
-					.OnValueCommitted_Lambda([this](int32 Value, ETextCommit::Type)
-					{
-						if (Editor && Editor->GetLevel())
-						{
-							Editor->SetSize(Editor->GetLevel()->Width, Value);
-						}
-					}))
 			]
 			+ SVerticalBox::Slot().AutoHeight()
 			[
@@ -3995,24 +3931,42 @@ TSharedRef<SWidget> SBoxLevelEditor::MakeParamList()
 				];
 		}
 
-		Rows->AddSlot().AutoHeight()
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10, 5, 8, 5)
+		if (Param.bCaptionAbove)
+		{
+			Rows->AddSlot().AutoHeight().Padding(10, 8, 10, 2)
 			[
-				SNew(SBox).WidthOverride(96.f)
-				[
-					SNew(STextBlock)
-					.Text(Param.Label)
-					.Font(DetailLabelFont())
-					.ColorAndOpacity(FSlateColor(DetailLabelColor))
-				]
-			]
-			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+				SNew(STextBlock)
+				.Text(Param.Label)
+				.AutoWrapText(true)
+				.Font(DetailLabelFont())
+				.ColorAndOpacity(FSlateColor(DetailLabelColor))
+			];
+			Rows->AddSlot().AutoHeight().Padding(10, 0, 10, 4)
 			[
 				Control
-			]
-		];
+			];
+		}
+		else
+		{
+			Rows->AddSlot().AutoHeight()
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(10, 5, 8, 5)
+				[
+					SNew(SBox).WidthOverride(96.f)
+					[
+						SNew(STextBlock)
+						.Text(Param.Label)
+						.Font(DetailLabelFont())
+						.ColorAndOpacity(FSlateColor(DetailLabelColor))
+					]
+				]
+				+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+				[
+					Control
+				]
+			];
+		}
 	}
 	return Rows;
 }
@@ -4123,6 +4077,15 @@ FReply SBoxLevelEditor::OnRedo()
 		{
 			Editor->RedoEdit();
 		}
+	}
+	return FReply::Handled();
+}
+
+FReply SBoxLevelEditor::OnReload()
+{
+	if (Editor)
+	{
+		Editor->ReloadFromAssets();
 	}
 	return FReply::Handled();
 }

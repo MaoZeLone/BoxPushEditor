@@ -129,3 +129,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
 	bool bAllowEventId = false;
 };
+
+/** 格子传感器。有它，Begin Overlap / End Overlap 才生效。不挡人、不挡推，也不算胜利。 */
+UCLASS(BlueprintType, EditInlineNew, DefaultToInstanced, CollapseCategories, meta = (DisplayName = "Trigger"))
+class BOXPUSH_API UTriggerLogic : public UInteractableLogicComp
+{
+	GENERATED_BODY()
+
+public:
+	/** 空：玩家和任意交互物都算。填了类型：只算 Type 匹配的实例。 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (Categories = "Type", DisplayName = "接受的类型", InstanceOverride = "bAllowAcceptType"))
+	FGameplayTag AcceptType;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Logic", meta = (DisplayName = "可实例重载"))
+	bool bAllowAcceptType = false;
+};

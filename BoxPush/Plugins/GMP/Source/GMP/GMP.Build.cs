@@ -1,0 +1,263 @@
+//  Copyright GenericMessagePlugin, Inc. All Rights Reserved.
+
+using UnrealBuildTool;
+using System.IO;
+using System.Text;
+
+public class GMP : ModuleRules
+{
+	public GMP(ReadOnlyTargetRules Target)
+		: base(Target)
+	{
+		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+
+		PublicIncludePaths.AddRange(new string[] {
+			ModuleDirectory,
+			ModuleDirectory + "/Shared",
+			ModuleDirectory + "/Classes",
+			ModuleDirectory + "/ThirdParty",
+			// ... add public include paths required here ...
+		});
+
+		PrivateIncludePaths.AddRange(new string[] {
+			ModuleDirectory + "/Private",
+			ModuleDirectory + "/GMP",
+			ModuleDirectory + "/ThirdParty",
+			// ... add other private include paths required here ...
+			Path.Combine(EngineDirectory, "Source/Runtime/Online/HTTP/Public"),
+		});
+
+		PublicDependencyModuleNames.AddRange(new string[] {
+			"Core",
+			"CoreUObject",
+			"Engine",  // UBlueprintFunctionLibrary
+					   // "GenericStorages",
+					   // "HTTP",
+		});
+
+		if (Target.Type == TargetType.Editor)
+		{
+			PrivateDependencyModuleNames.Add("UnrealEd");
+			PrivateDependencyModuleNames.Add("BlueprintGraph");
+			PrivateDependencyModuleNames.Add("DesktopPlatform");
+		}
+		PrivateDefinitions.Add("SUPPRESS_MONOLITHIC_HEADER_WARNINGS=1");
+
+		// Editor codegen (FGMPSluaCodeGen/FGMPUnLuaCodeGen/FGMPPuertsCodeGen/FGMPCSharpCodeGen) emits per-tag strongly-typed
+		// binds guarded by these macros. Off by default (generated .gen.cpp compiles out); turn on to enable the static-bind
+		// fast path. Public so the downstream module compiling the generated .gen.cpp sees them.
+		bool bGMPSluaStaticBind = false;
+		bool bGMPUnLuaStaticBind = false;
+		bool bGMPPuertsStaticBind = false;
+		bool bGMPCSharpStaticBind = false;
+		PublicDefinitions.Add("GMP_SLUA_STATIC_BIND=" + (bGMPSluaStaticBind ? "1" : "0"));
+		PublicDefinitions.Add("GMP_UNLUA_STATIC_BIND=" + (bGMPUnLuaStaticBind ? "1" : "0"));
+		PublicDefinitions.Add("GMP_PUERTS_STATIC_BIND=" + (bGMPPuertsStaticBind ? "1" : "0"));
+		PublicDefinitions.Add("GMP_CSHARP_STATIC_BIND=" + (bGMPCSharpStaticBind ? "1" : "0"));
+
+		bool bEnableGMPHttpRequest = true;
+		if (bEnableGMPHttpRequest)
+		{
+			PrivateDependencyModuleNames.Add("HTTP");
+			PrivateDefinitions.Add("GMP_WITH_HTTP_PACKAGE=1");
+		}
+		else
+		{
+			PrivateDefinitions.Add("GMP_WITH_HTTP_PACKAGE=0");
+		}
+
+		// HTTP transport for the MCP base. Editor only, since the endpoint is unauthenticated.
+		// HTTPServer stays private: the implementation sits in one TU of this module and consumers
+		// link the exported entry points, so they never take the dependency themselves.
+		// GMP_WITH_MCP is WITH_EDITOR; the registry must be one instance across every module that registers
+		// tools, so its accessor is exported rather than header-inline.
+		if (Target.Type == TargetType.Editor)
+		{
+			PublicDefinitions.Add("MCP_REGISTRY_ISOLATED_IMPL=1");
+			PublicDefinitions.Add("MCP_API=GMP_API");
+		}
+
+		bool bEnableMcpHttp = Target.Type == TargetType.Editor;
+		PublicDefinitions.Add("GMP_WITH_MCP_HTTP=" + (bEnableMcpHttp ? "1" : "0"));
+		if (bEnableMcpHttp)
+		{
+			PrivateDependencyModuleNames.Add("HTTPServer");
+			PublicDefinitions.Add("MCP_HTTP_API=GMP_API");
+		}
+
+		// Bridge onto the engine MCP plugin (5.8+), which brings its own server and SSE. That plugin is
+		// NoRedist, so it can never be listed in GMP.uplugin: opt in per project, on an engine that has
+		// it and with the plugin enabled. Off means the self-hosted transport above stays in charge.
+		bool bUseEngineMcp = false;
+		PublicDefinitions.Add("GMP_WITH_ENGINE_MCP=" + (bUseEngineMcp ? "1" : "0"));
+		if (bUseEngineMcp)
+		{
+			PrivateDependencyModuleNames.Add("ModelContextProtocol");
+		}
+
+		if (Target.Configuration == UnrealTargetConfiguration.DebugGame || Target.Configuration == UnrealTargetConfiguration.Debug)
+		{
+			PrivateDefinitions.Add("GMP_DEBUGGAME=1");
+			if (Target.Type == TargetType.Editor)
+				PrivateDefinitions.Add("GMP_DEBUGGAME_EDITOR=1");
+			else
+				PrivateDefinitions.Add("GMP_DEBUGGAME_EDITOR=0");
+		}
+		else
+		{
+			if (!Target.bIsEngineInstalled)
+			{
+				// always add "GMP" as PrivateDependencyModuleNames
+				SharedPCHHeaderFile = ModuleDirectory + "/Shared/GMPCore.h";
+			}
+
+			PrivateDefinitions.Add("GMP_DEBUGGAME=0");
+			PrivateDefinitions.Add("GMP_DEBUGGAME_EDITOR=0");
+		}
+		DynamicallyLoadedModuleNames.AddRange(new string[] {
+			// ... add any modules that your module loads dynamically here ...
+		});
+
+		PrivateDefinitions.Add("UPB_BUILD_API=1");
+		PrivateDefinitions.Add("UPB_DESC_PREFIX=google_upb_");
+
+		bool bEnableProtoExtensions = true;
+		if (bEnableProtoExtensions)
+		{
+			PublicDefinitions.Add("GMP_WITH_UPB=1");
+
+			bool bEnableProtoEditorGenerator = true;
+			if (bEnableProtoEditorGenerator && Target.Type == TargetType.Editor && !Target.bIsEngineInstalled)
+			{
+				PrivateDefinitions.Add("GMP_WITH_PROTO_GENERATOR");
+				PrivateDependencyModuleNames.AddRange(new string[] {
+							"Protobuf", // compile proto to proto descriptor binary
+							"Slate",    // select proto files
+							"SlateCore",
+						});
+			}
+		}
+
+		bool bEnableYamlExtensions = false;
+		if (bEnableYamlExtensions)
+		{
+			PrivateDefinitions.Add("GMP_WITH_YAML=1");
+		}
+		else
+		{
+			PrivateDefinitions.Add("GMP_WITH_YAML=0");
+		}
+
+		bool bEnableJsonDom = true;
+		PublicDefinitions.Add("GMP_WITH_JSONDOM=" + (bEnableJsonDom ? "1" : "0"));
+		if (bEnableJsonDom)
+		{
+			// Isolated impl keeps rapidjson in this module; GMP_API lets consumers link the parse entry points.
+			PublicDefinitions.Add("JSONDOM_ISOLATED_IMPL=1");
+			PublicDefinitions.Add("JSONDOM_API=GMP_API");
+		}
+
+		BuildVersion Version;
+		if (BuildVersion.TryRead(BuildVersion.GetDefaultFileName(), out Version))
+		{
+			if (Version.MajorVersion > 4 || (Version.MajorVersion == 4 && Version.MinorVersion > 23))
+			{
+				PublicDependencyModuleNames.Add("NetCore");
+			}
+
+			if (Version.MajorVersion == 5 && Version.MinorVersion < 5)
+			{
+				PrivateDependencyModuleNames.AddRange(new string[] {
+					"StructUtils",
+				});
+			}
+			
+			bool bUE_USE_FPROPERTY = (Version.MajorVersion > 4 || (Version.MajorVersion == 4 && Version.MinorVersion >= 25));
+			string IncFile = Path.Combine(ModuleDirectory, "GMP/PropertyCompatibility.include");
+			if (bUE_USE_FPROPERTY)
+			{
+				PublicDefinitions.Add("UE_USE_UPROPERTY=0");
+				File.Delete(IncFile);
+			}
+			else
+			{
+				PublicDefinitions.Add("UE_USE_UPROPERTY=1");
+				if (!File.Exists(IncFile))
+					File.Copy(Path.Combine(ModuleDirectory, "..", "ThirdParty/PropertyCompatibility.include"), IncFile);
+			}
+			bool bEnableScriptExtensions = Version.MajorVersion >= 4;
+			if (bEnableScriptExtensions)
+			{
+				if (Target.Platform.IsInGroup(UnrealPlatformGroup.Desktop) || Target.Configuration != UnrealTargetConfiguration.Shipping)
+				{
+					PrivateDependencyModuleNames.AddRange(new string[] {
+						"HTTPServer",
+					});
+					PrivateDefinitions.Add("GMP_HTTPSERVER=1");
+				}
+
+				if (Target.Type == TargetType.Editor)
+				{
+					PrivateDependencyModuleNames.AddRange(new string[] {
+						"PythonScriptPlugin",
+					});
+				}
+			}
+		}
+		
+		bool bEnableAndroidUIThreadSupport = false;
+		if (bEnableAndroidUIThreadSupport && Target.Platform == UnrealTargetPlatform.Android)
+		{
+			PrivateDefinitions.Add("GMP_WITH_ANDROID_UI_THREAD=1");
+			// JNI static symbol must match GameActivity's java package: com.epicgames.ue4 (UE4) vs com.epicgames.unreal (UE5+)
+			PrivateDefinitions.Add("GMP_ANDROID_UITHREAD_JNI_FUNC=" + (Target.Version.MajorVersion >= 5
+				? "Java_com_epicgames_unreal_GameActivity_gmpNativeRunNativeTFunction"
+				: "Java_com_epicgames_ue4_GameActivity_gmpNativeRunNativeTFunction"));
+            PrivateDependencyModuleNames.Add("Launch");
+            string GenDir = Path.Combine(ModuleDirectory, "Intermediate", "Android");
+            Directory.CreateDirectory(GenDir);
+            string UplPath = Path.Combine(GenDir, "Generated_Dispatch_UPL.xml");
+            var xml = new StringBuilder();
+            xml.AppendLine(@"<?xml version=""1.0"" encoding=""utf-8""?>");
+            xml.AppendLine(@"<root xmlns:android=""http://schemas.android.com/apk/res/android"">");
+            xml.AppendLine(@"  <plugins>");
+            xml.AppendLine(@"    <plugin name=""DispatchUPL_Generated"" enabled=""true"">");
+            xml.AppendLine(@"      <language>UPL</language>");
+            xml.AppendLine(@"      <script>");
+
+            // imports
+            xml.AppendLine(@"        <gameActivityImportAdditions>");
+            xml.AppendLine(@"          import android.os.Handler;");
+            xml.AppendLine(@"          import android.os.Looper;");
+            xml.AppendLine(@"        </gameActivityImportAdditions>");
+
+            // class additions
+            xml.AppendLine(@"        <gameActivityClassAdditions><![CDATA[");
+            xml.AppendLine(@"          private static final Handler __ue_dispatch_main = new Handler(Looper.getMainLooper());");
+            xml.AppendLine(@"          public static void gmpPostTFunctionToUIThread(final long ptr) {");
+            xml.AppendLine(@"              __ue_dispatch_main.post(new Runnable() { @Override public void run() { gmpNativeRunNativeTFunction(ptr); } });");
+            xml.AppendLine(@"          }");
+            xml.AppendLine(@"          public static boolean gmpIsOnUiThread() {");
+            xml.AppendLine(@"              return Thread.currentThread() == Looper.getMainLooper().getThread();");
+            xml.AppendLine(@"          }");
+            xml.AppendLine(@"          private static native void gmpNativeRunNativeTFunction(long ptr);");
+            xml.AppendLine(@"        ]]></gameActivityClassAdditions>");
+
+            // proguard
+            xml.AppendLine(@"        <proguardAdditions>");
+            xml.AppendLine(@"          -keepclassmembers class * extends android.app.Activity { public static void gmpPostTFunctionToUIThread(long); private static native void gmpNativeRunNativeTFunction(long); public static boolean gmpIsOnUiThread(); }");
+            xml.AppendLine(@"        </proguardAdditions>");
+
+            xml.AppendLine(@"      </script>");
+            xml.AppendLine(@"    </plugin>");
+            xml.AppendLine(@"  </plugins>");
+            xml.AppendLine(@"</root>");
+            File.WriteAllText(UplPath, xml.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier:false));
+            AdditionalPropertiesForReceipt.Add("AndroidPlugin", UplPath);
+        }
+		else
+		{
+			PrivateDefinitions.Add("GMP_WITH_ANDROID_UI_THREAD=0");
+		}
+	}
+}
