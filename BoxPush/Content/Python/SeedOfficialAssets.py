@@ -7,6 +7,7 @@ INPUT_DIR = "/Game/Data/Characters/Input"
 INTERACT_DIR = "/Game/Data/Interactables"
 LEVEL_DIR = "/Game/Data/Levels/BuiltIn"
 DATA_DIR = "/Game/Data"
+MATERIAL_DIR = "/Game/Data/Materials"
 TERRAIN_DIR = "/Game/Data/Terrain"
 SPRITE_DIR = "/Game/Data/2D/Interactables"
 FX_DIR = "/Game/Data/FX"
@@ -146,17 +147,18 @@ def seed_target_fx():
 
 def seed_tile_visual():
     ensure_dir(DATA_DIR)
+    ensure_dir(MATERIAL_DIR)
     cube = unreal.EditorAssetLibrary.load_asset("/Engine/BasicShapes/Cube")
     parent = unreal.EditorAssetLibrary.load_asset("/Engine/BasicShapes/BasicShapeMaterial")
 
     def make_mic(name, r, g, b):
-        path = DATA_DIR + "/" + name
+        path = MATERIAL_DIR + "/" + name
         if unreal.EditorAssetLibrary.does_asset_exist(path):
             asset = unreal.EditorAssetLibrary.load_asset(path)
         else:
             factory = unreal.MaterialInstanceConstantFactoryNew()
             asset = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
-                name, DATA_DIR, unreal.MaterialInstanceConstant, factory
+                name, MATERIAL_DIR, unreal.MaterialInstanceConstant, factory
             )
         if not asset:
             raise RuntimeError("Failed to create " + path)

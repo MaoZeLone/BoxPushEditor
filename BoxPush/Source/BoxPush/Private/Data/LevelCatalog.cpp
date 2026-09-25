@@ -29,15 +29,16 @@ TArray<FLevelCatalogRow> ULevelCatalogLibrary::GetListedRows(const UDataTable* C
 	TArray<FLevelCatalogRow> Rows;
 	ForEachCatalogRow(Catalog, [&Rows](const FName& RowName, const FLevelCatalogRow& Row)
 	{
-		if (Row.bListed)
+		if (!Row.bListed || Row.LevelAsset.IsNull() || !Row.LevelAsset.LoadSynchronous())
 		{
-			FLevelCatalogRow Copy = Row;
-			if (Copy.LevelId.IsNone())
-			{
-				Copy.LevelId = RowName;
-			}
-			Rows.Add(Copy);
+			return;
 		}
+		FLevelCatalogRow Copy = Row;
+		if (Copy.LevelId.IsNone())
+		{
+			Copy.LevelId = RowName;
+		}
+		Rows.Add(Copy);
 	});
 	Rows.Sort([](const FLevelCatalogRow& A, const FLevelCatalogRow& B)
 	{
@@ -111,6 +112,10 @@ void ULevelCatalogLibrary::ValidateCatalog(const UDataTable* Catalog, TArray<FLe
 			{
 				AddIssue(OutIssues, true, FString::Printf(TEXT("%s 的关卡资产名与总表不一致"), *Id.ToString()));
 			}
+		}
+		else
+		{
+			AddIssue(OutIssues, true, FString::Printf(TEXT("%s 的关卡资产找不到"), *Id.ToString()));
 		}
 	});
 }
